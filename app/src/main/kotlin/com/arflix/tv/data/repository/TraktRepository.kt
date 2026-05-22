@@ -3306,9 +3306,13 @@ class TraktRepository @Inject constructor(
     /**
      * Get movie comments
      */
-    suspend fun getMovieComments(tmdbId: Int, page: Int = 1, limit: Int = 10): List<TraktComment> {
+    suspend fun getMovieComments(tmdbId: Int, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
+        return getMovieComments(tmdbId.toString(), page, limit, sort)
+    }
+
+    suspend fun getMovieComments(mediaId: String, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
         return try {
-            traktApi.getMovieComments(clientId, "2", tmdbId.toString(), page, limit)
+            traktApi.getMovieComments(clientId, "2", mediaId, sort, page, limit)
         } catch (e: Exception) {
             emptyList()
         }
@@ -3317,9 +3321,13 @@ class TraktRepository @Inject constructor(
     /**
      * Get show comments
      */
-    suspend fun getShowComments(tmdbId: Int, page: Int = 1, limit: Int = 10): List<TraktComment> {
+    suspend fun getShowComments(tmdbId: Int, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
+        return getShowComments(tmdbId.toString(), page, limit, sort)
+    }
+
+    suspend fun getShowComments(mediaId: String, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
         return try {
-            traktApi.getShowComments(clientId, "2", tmdbId.toString(), page, limit)
+            traktApi.getShowComments(clientId, "2", mediaId, sort, page, limit)
         } catch (e: Exception) {
             emptyList()
         }
@@ -3328,9 +3336,13 @@ class TraktRepository @Inject constructor(
     /**
      * Get season comments
      */
-    suspend fun getSeasonComments(showTmdbId: Int, season: Int, page: Int = 1, limit: Int = 10): List<TraktComment> {
+    suspend fun getSeasonComments(showTmdbId: Int, season: Int, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
+        return getSeasonComments(showTmdbId.toString(), season, page, limit, sort)
+    }
+
+    suspend fun getSeasonComments(showId: String, season: Int, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
         return try {
-            traktApi.getSeasonComments(clientId, "2", showTmdbId.toString(), season, page, limit)
+            traktApi.getSeasonComments(clientId, "2", showId, season, sort, page, limit)
         } catch (e: Exception) {
             emptyList()
         }
@@ -3339,9 +3351,13 @@ class TraktRepository @Inject constructor(
     /**
      * Get episode comments
      */
-    suspend fun getEpisodeComments(showTmdbId: Int, season: Int, episode: Int, page: Int = 1, limit: Int = 10): List<TraktComment> {
+    suspend fun getEpisodeComments(showTmdbId: Int, season: Int, episode: Int, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
+        return getEpisodeComments(showTmdbId.toString(), season, episode, page, limit, sort)
+    }
+
+    suspend fun getEpisodeComments(showId: String, season: Int, episode: Int, page: Int = 1, limit: Int = 10, sort: String = "newest"): List<TraktComment> {
         return try {
-            traktApi.getEpisodeComments(clientId, "2", showTmdbId.toString(), season, episode, page, limit)
+            traktApi.getEpisodeComments(clientId, "2", showId, season, episode, sort, page, limit)
         } catch (e: Exception) {
             emptyList()
         }

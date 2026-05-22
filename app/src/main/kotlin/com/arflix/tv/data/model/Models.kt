@@ -102,7 +102,7 @@ data class CastMember(
 ) : Serializable
 
 /**
- * Review from TMDB
+ * Community review shown on details pages.
  */
 @Immutable
 data class Review(

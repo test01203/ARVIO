@@ -13,6 +13,7 @@ import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
+import com.arflix.tv.data.api.TraktComment
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
@@ -179,6 +180,10 @@ class DetailsViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "DetailsViewModel"
+        private const val MIN_COMMUNITY_REVIEW_CHARS = 80
+        private const val MAX_COMMUNITY_REVIEW_CHARS = 1200
+        private const val MIN_COMMUNITY_REVIEW_WORDS = 16
+        private const val MIN_COMMUNITY_REVIEW_COUNT = 2
     }
 
     private val _uiState = MutableStateFlow(DetailsUiState())
@@ -202,6 +207,19 @@ class DetailsViewModel @Inject constructor(
     private fun isBlankRating(value: String): Boolean {
         return value.isBlank() || value == "0.0" || value == "0"
     }
+
+    private val reviewWhitespaceRegex = Regex("\\s+")
+    private val reviewMarkdownLinkRegex = Regex("\\[([^\\]]+)]\\([^)]*\\)")
+    private val reviewHtmlTagRegex = Regex("<[^>]*>")
+    private val reviewMarkdownNoiseRegex = Regex("[*_`>#]+")
+    private val reviewSpamRegex = Regex(
+        pattern = "\\b(?:https?://|www\\.|discord\\.gg|t\\.me/|telegram|whatsapp|onlyfans|casino|betting|viagra|loan|crypto|airdrop|promo\\s+code|coupon|download\\s+now|watch\\s+(?:free|online)|free\\s+stream|\\.xyz\\b|\\.top\\b|\\.click\\b|\\.link\\b|\\.site\\b)\\b",
+        option = RegexOption.IGNORE_CASE
+    )
+    private val reviewDomainRegex = Regex(
+        pattern = "\\b[a-z0-9-]+\\.(?:com|net|org|xyz|top|click|link|site|online|shop|info)\\b",
+        option = RegexOption.IGNORE_CASE
+    )
 
     private fun normalizeAutoPlayMinQuality(raw: String?): String {
         return when (raw?.trim()?.lowercase()) {
@@ -515,7 +533,10 @@ class DetailsViewModel @Inject constructor(
 
                 launch {
                     delay(420L)
-                    val reviews = runCatching { mediaRepository.getReviews(mediaType, mediaId) }.getOrNull()
+                    val externalIds = runCatching { externalIdsDeferred.await() }.getOrNull()
+                    val reviews = runCatching {
+                        loadCommunityReviews(mediaType, mediaId, externalIds?.imdbId)
+                    }.getOrNull()
                     if (!reviews.isNullOrEmpty()) {
                         updateState { state -> state.copy(reviews = reviews) }
                     }
@@ -2202,6 +2223,83 @@ class DetailsViewModel @Inject constructor(
         } catch (_: Exception) {
             ExternalIds(null, null)
         }
+    }
+
+    private suspend fun loadCommunityReviews(
+        mediaType: MediaType,
+        mediaId: Int,
+        imdbId: String?
+    ): List<Review> {
+        val traktId = imdbId?.takeIf { it.startsWith("tt", ignoreCase = true) } ?: mediaId.toString()
+        val comments = if (mediaType == MediaType.TV) {
+            traktRepository.getShowComments(traktId, page = 1, limit = 30, sort = "likes")
+        } else {
+            traktRepository.getMovieComments(traktId, page = 1, limit = 30, sort = "likes")
+        }
+
+        val reviews = comments
+            .asSequence()
+            .filter { it.parentId == null && it.review && !it.spoiler }
+            .filterNot { isSpammyReviewText(it.comment) }
+            .sortedWith(
+                compareByDescending<TraktComment> { it.likes }
+                    .thenByDescending { it.userStats?.rating ?: 0 }
+                    .thenByDescending { it.createdAt }
+            )
+            .mapNotNull { it.toCommunityReview() }
+            .distinctBy { review ->
+                "${review.authorUsername}:${review.content.lowercase(Locale.US).take(140)}"
+            }
+            .take(8)
+            .toList()
+
+        return reviews.takeIf { it.size >= MIN_COMMUNITY_REVIEW_COUNT } ?: emptyList()
+    }
+
+    private fun TraktComment.toCommunityReview(): Review? {
+        val cleanedContent = cleanCommunityReviewText(comment)
+        if (cleanedContent.length !in MIN_COMMUNITY_REVIEW_CHARS..MAX_COMMUNITY_REVIEW_CHARS) {
+            return null
+        }
+        val wordCount = cleanedContent.split(reviewWhitespaceRegex).count { it.length > 1 }
+        if (wordCount < MIN_COMMUNITY_REVIEW_WORDS) return null
+
+        val username = user?.username?.trim().orEmpty()
+        val displayName = user?.name
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: username.takeIf { it.isNotBlank() }
+            ?: "Trakt user"
+
+        return Review(
+            id = "trakt_$id",
+            author = displayName,
+            authorUsername = username,
+            authorAvatar = null,
+            content = cleanedContent,
+            rating = userStats?.rating?.takeIf { it > 0 }?.toFloat(),
+            createdAt = createdAt
+        )
+    }
+
+    private fun cleanCommunityReviewText(raw: String): String {
+        return raw
+            .replace(reviewMarkdownLinkRegex, "\$1")
+            .replace(reviewHtmlTagRegex, " ")
+            .replace(reviewMarkdownNoiseRegex, " ")
+            .replace(reviewWhitespaceRegex, " ")
+            .trim()
+    }
+
+    private fun isSpammyReviewText(raw: String): Boolean {
+        val text = raw.trim()
+        if (text.isBlank()) return true
+        if (reviewSpamRegex.containsMatchIn(text) || reviewDomainRegex.containsMatchIn(text)) return true
+        if (text.count { it == '$' } > 2 || text.count { it == '!' } > 6) return true
+
+        val visibleChars = text.count { !it.isWhitespace() }.coerceAtLeast(1)
+        val letters = text.count { it.isLetter() }
+        return letters.toFloat() / visibleChars.toFloat() < 0.45f
     }
 
     private suspend fun appendHomeServerSourcesInBackground(
