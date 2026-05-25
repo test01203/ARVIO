@@ -1435,8 +1435,7 @@ private fun HeroSection(
                             null
                         }
                     }
-                    val displayRating = displayRatingFor(currentItem)
-                    val rating = displayRating.value
+                    val rating = imdbRatingFor(currentItem)
                     val ratingValue = parseRatingValue(rating)
                     val hasRatingMetadata = ratingValue > 0f
                     val hasBudgetMetadata = showBudget && !budgetText.isNullOrBlank()
@@ -1546,9 +1545,8 @@ private fun HeroSection(
                                 }
 
                                 if (hasRatingMetadata) {
-                                    SourceRatingBadge(
+                                    ImdbSvgRatingBadge(
                                         rating = rating,
-                                        isImdbRating = displayRating.isImdb,
                                         imageLoader = metadataLogoImageLoader,
                                         ratingFontSize = 13,
                                         logoWidth = 36.dp,
@@ -1627,18 +1625,9 @@ private fun formatBudgetCompact(budget: Long): String {
     }
 }
 
-private data class DisplayRating(val value: String, val isImdb: Boolean)
-
-private fun displayRatingFor(item: MediaItem): DisplayRating {
+private fun imdbRatingFor(item: MediaItem): String {
     val imdbValue = parseRatingValue(item.imdbRating)
-    if (imdbValue > 0f) return DisplayRating(item.imdbRating, isImdb = true)
-
-    val tmdbValue = parseRatingValue(item.tmdbRating)
-    return if (tmdbValue > 0f) {
-        DisplayRating(item.tmdbRating, isImdb = false)
-    } else {
-        DisplayRating("", isImdb = false)
-    }
+    return if (imdbValue > 0f) item.imdbRating else ""
 }
 
 @Composable
@@ -1766,8 +1755,7 @@ private fun MobileHeroOverlay(
         item.genreIds.mapNotNull { genreMap[it] }.take(2).joinToString(" | ")
     }
     val year = item.releaseDate?.take(4)?.takeIf { it.isNotEmpty() } ?: item.year
-    val displayRating = displayRatingFor(item)
-    val rating = displayRating.value
+    val rating = imdbRatingFor(item)
     val ratingValue = parseRatingValue(rating)
     val hasMetadata = genreText.isNotEmpty() || year.isNotEmpty() || ratingValue > 0f
 
@@ -1855,9 +1843,8 @@ private fun MobileHeroOverlay(
                                 color = Color.White.copy(alpha = 0.6f)
                             )
                         }
-                        SourceRatingBadge(
+                        ImdbSvgRatingBadge(
                             rating = rating,
-                            isImdbRating = displayRating.isImdb,
                             imageLoader = metadataLogoImageLoader,
                             ratingFontSize = 12,
                             logoWidth = 32.dp,
@@ -2046,8 +2033,7 @@ private fun MobileHeroCarousel(
                     item.genreIds.mapNotNull { genreMap[it] }.take(2).joinToString(" | ")
                 }
                 val year = item.releaseDate?.take(4)?.takeIf { it.isNotEmpty() } ?: item.year
-                val displayRating = displayRatingFor(item)
-                val rating = displayRating.value
+                val rating = imdbRatingFor(item)
                 val ratingValue = parseRatingValue(rating)
 
                 val displayOverview = remember(item.id, item.overview) {
@@ -2128,7 +2114,7 @@ private fun MobileHeroCarousel(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        // Metadata row with source-aware rating badge
+                        // Metadata row with IMDb rating badge
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -2165,9 +2151,8 @@ private fun MobileHeroCarousel(
                                 )
                             }
                             if (ratingValue > 0f) {
-                                SourceRatingBadge(
+                                ImdbSvgRatingBadge(
                                     rating = rating,
-                                    isImdbRating = displayRating.isImdb,
                                     imageLoader = metadataLogoImageLoader,
                                     ratingFontSize = 11,
                                     logoWidth = 30.dp,
@@ -3170,37 +3155,6 @@ private fun MetaPill(text: String) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SourceRatingBadge(
-    rating: String,
-    isImdbRating: Boolean,
-    imageLoader: ImageLoader,
-    ratingFontSize: Int,
-    logoWidth: Dp,
-    logoHeight: Dp,
-    textShadow: Shadow
-) {
-    if (isImdbRating) {
-        ImdbSvgRatingBadge(
-            rating = rating,
-            imageLoader = imageLoader,
-            ratingFontSize = ratingFontSize,
-            logoWidth = logoWidth,
-            logoHeight = logoHeight,
-            textShadow = textShadow
-        )
-    } else {
-        TmdbRatingBadge(
-            rating = rating,
-            ratingFontSize = ratingFontSize,
-            logoWidth = logoWidth,
-            logoHeight = logoHeight,
-            textShadow = textShadow
-        )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
 private fun ImdbSvgRatingBadge(
     rating: String,
     imageLoader: ImageLoader,
@@ -3223,48 +3177,6 @@ private fun ImdbSvgRatingBadge(
                 .width(logoWidth)
                 .height(logoHeight)
         )
-        Text(
-            text = rating,
-            style = ArflixTypography.caption.copy(
-                fontSize = ratingFontSize.sp,
-                fontWeight = FontWeight.Bold,
-                shadow = textShadow
-            ),
-            color = Color.White,
-            maxLines = 1
-        )
-    }
-}
-
-@Composable
-private fun TmdbRatingBadge(
-    rating: String,
-    ratingFontSize: Int,
-    logoWidth: Dp,
-    logoHeight: Dp,
-    textShadow: Shadow
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .width(logoWidth)
-                .height(logoHeight)
-                .background(Color(0xFF01B4E4), RoundedCornerShape(3.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "TMDb",
-                style = ArflixTypography.caption.copy(
-                    fontSize = (ratingFontSize - 4).coerceAtLeast(7).sp,
-                    fontWeight = FontWeight.Black
-                ),
-                color = Color.Black,
-                maxLines = 1
-            )
-        }
         Text(
             text = rating,
             style = ArflixTypography.caption.copy(
