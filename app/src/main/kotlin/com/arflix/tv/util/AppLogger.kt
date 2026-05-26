@@ -137,6 +137,16 @@ object AppLogger {
      * Record a non-fatal exception for crash reporting.
      */
     fun recordException(throwable: Throwable, context: Map<String, String> = emptyMap()) {
+        val dropReason = CrashReportFilter.dropReasonForHandledException(throwable)
+        if (dropReason != null) {
+            breadcrumb(
+                tag = "exception",
+                message = "filtered ${throwable::class.java.simpleName} reason=$dropReason",
+                severity = "info"
+            )
+            return
+        }
+
         breadcrumb(
             tag = "exception",
             message = throwable::class.java.simpleName,
