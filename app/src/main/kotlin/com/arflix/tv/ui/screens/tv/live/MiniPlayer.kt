@@ -61,6 +61,8 @@ fun MiniPlayerRow(
     favoriteSet: Set<String>,
     onFavoriteToggle: (String) -> Unit,
     onFullscreenClick: (() -> Unit)? = null,
+    variantCount: Int = 1,
+    onOpenVariants: (() -> Unit)? = null,
     compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -84,6 +86,8 @@ fun MiniPlayerRow(
                 nowNext = nowNext,
                 isFavorite = channel?.id?.let { it in favoriteSet } == true,
                 onFavoriteToggle = onFavoriteToggle,
+                variantCount = variantCount,
+                onOpenVariants = onOpenVariants,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -106,6 +110,8 @@ fun MiniPlayerRow(
                 nowNext = nowNext,
                 isFavorite = channel?.id?.let { it in favoriteSet } == true,
                 onFavoriteToggle = onFavoriteToggle,
+                variantCount = variantCount,
+                onOpenVariants = onOpenVariants,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -240,13 +246,15 @@ private fun InfoColumn(
     nowNext: IptvNowNext?,
     isFavorite: Boolean,
     onFavoriteToggle: (String) -> Unit,
+    variantCount: Int,
+    onOpenVariants: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ChannelIdentityRow(channel = channel)
+        ChannelIdentityRow(channel = channel, variantCount = variantCount, onOpenVariants = onOpenVariants)
         NowCard(channel = channel, clockTickMillis = clockTickMillis, nowNext = nowNext)
         NextRow(nowNext = nowNext)
     }
@@ -254,7 +262,11 @@ private fun InfoColumn(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun ChannelIdentityRow(channel: EnrichedChannel?) {
+private fun ChannelIdentityRow(
+    channel: EnrichedChannel?,
+    variantCount: Int,
+    onOpenVariants: (() -> Unit)?,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -283,6 +295,9 @@ private fun ChannelIdentityRow(channel: EnrichedChannel?) {
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     QualityBadge(channel.quality)
+                    if (variantCount > 1) {
+                        SourceBadge(variantCount, onOpenVariants)
+                    }
                     channel.country?.takeIf { it != channel.lang }?.let { LangBadge(it) }
                     LangBadge(channel.lang)
                 }
@@ -299,6 +314,20 @@ private fun ChannelIdentityRow(channel: EnrichedChannel?) {
                 style = LiveType.ChannelName.copy(color = LiveColors.FgMute),
             )
         }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SourceBadge(count: Int, onOpenVariants: (() -> Unit)?) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(LiveColors.Panel)
+            .then(if (onOpenVariants != null) Modifier.clickable { onOpenVariants() } else Modifier)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text("$count sources", style = LiveType.Badge.copy(color = LiveColors.Accent))
     }
 }
 

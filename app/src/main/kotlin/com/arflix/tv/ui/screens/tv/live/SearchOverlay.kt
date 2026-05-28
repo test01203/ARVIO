@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.util.formatGenreName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -74,7 +75,7 @@ fun SearchOverlay(
 ) {
     var query by remember { mutableStateOf("") }
     var debounced by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
+    var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     val focusRequester = remember { FocusRequester() }
     val firstResultFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
@@ -89,13 +90,16 @@ fun SearchOverlay(
         val q = debounced.lowercase()
         if (q.isEmpty()) {
             // Show the first 60 by default — gives a preview list users can scroll.
-            results = channels.take(60)
+            results = channels.take(60).map { channel ->
+                SearchResult(channel, nowNext[channel.id]?.now?.let { "Now: ${it.title}" })
+            }
             return@LaunchedEffect
         }
         results = withContext(Dispatchers.Default) {
             channels.asSequence()
                 .map { ch ->
                     val nameLower = ch.name.lowercase()
+                    val guideMatch = nowNext[ch.id]?.bestProgramMatch(q)
                     val guideScore = nowNext[ch.id]?.let { guide ->
                         val titles = buildList {
                             guide.now?.title?.let { add(it) }
@@ -121,7 +125,7 @@ fun SearchOverlay(
                         ch.country?.lowercase() == q -> 200
                         else -> 0
                     }
-                    ch to score
+                    SearchResult(ch, guideMatch?.let { labelProgramMatch(it, nowNext[ch.id]) }) to score
                 }
                 .filter { it.second > 0 }
                 .sortedByDescending { it.second }
@@ -219,14 +223,16 @@ fun SearchOverlay(
                 modifier = Modifier.fillMaxWidth().height(440.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                items(results, key = { it.id }) { ch ->
-                    val focusMod = if (results.isNotEmpty() && ch.id == results.first().id) {
+                items(results, key = { it.channel.id }) { result ->
+                    val ch = result.channel
+                    val focusMod = if (results.isNotEmpty() && ch.id == results.first().channel.id) {
                         Modifier.focusRequester(firstResultFocus)
                     } else Modifier
                     SearchResultRow(
                         channel = ch,
+                        matchText = result.matchText,
                         onPick = onPick,
-                        onMoveUp = if (results.isNotEmpty() && ch.id == results.first().id) {
+                        onMoveUp = if (results.isNotEmpty() && ch.id == results.first().channel.id) {
                             { runCatching { focusRequester.requestFocus() } }
                         } else {
                             null
@@ -239,10 +245,38 @@ fun SearchOverlay(
     }
 }
 
+private data class SearchResult(
+    val channel: EnrichedChannel,
+    val matchText: String?,
+)
+
+private fun IptvNowNext.bestProgramMatch(query: String): IptvProgram? {
+    val candidates = buildList {
+        now?.let { add(it) }
+        next?.let { add(it) }
+        later?.let { add(it) }
+        upcoming.take(8).forEach { add(it) }
+    }
+    return candidates.firstOrNull { it.title.equals(query, ignoreCase = true) }
+        ?: candidates.firstOrNull { it.title.lowercase().startsWith(query) }
+        ?: candidates.firstOrNull { it.title.lowercase().contains(query) }
+}
+
+private fun labelProgramMatch(program: IptvProgram, guide: IptvNowNext?): String {
+    val prefix = when (program) {
+        guide?.now -> "Now"
+        guide?.next -> "Next"
+        guide?.later -> "Later"
+        else -> "Guide"
+    }
+    return "$prefix: ${program.title}"
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SearchResultRow(
     channel: EnrichedChannel,
+    matchText: String?,
     onPick: (EnrichedChannel) -> Unit,
     onMoveUp: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -302,8 +336,10 @@ private fun SearchResultRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = formatGenreName(channel.genre.name),
+                text = matchText ?: formatGenreName(channel.genre.name),
                 style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

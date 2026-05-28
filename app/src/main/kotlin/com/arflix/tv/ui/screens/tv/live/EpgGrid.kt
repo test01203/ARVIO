@@ -90,6 +90,8 @@ fun EpgGrid(
     onChannelFocused: (EnrichedChannel) -> Unit = {},
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
+    variantCountFor: (EnrichedChannel) -> Int = { 1 },
+    onOpenVariants: (EnrichedChannel) -> Unit = {},
     compact: Boolean = false,
     gridFocused: Boolean = false,
     onMoveLeftFromChannels: () -> Unit = {},
@@ -397,6 +399,8 @@ fun EpgGrid(
                                 onMoveUp = { moveChannelFocus(-1) },
                                 onMoveDown = { moveChannelFocus(+1) },
                                 onFavoriteToggle = { onChannelFavoriteToggle(ch.id) },
+                                variantCount = variantCountFor(ch),
+                                onOpenVariants = { onOpenVariants(ch) },
                                 rowHeight = rowHeight,
                                 forceFocused = gridFocused &&
                                     focusMode == EpgGridFocusMode.ChannelList &&
@@ -438,9 +442,11 @@ fun EpgGrid(
                                         ch.id in epgLoadingChannelIds ||
                                             isGuideBackfillLoading
                                         )
+                                val guideAttempted = ch.id in epgAttemptedChannelIds
                                 val placeholderTitle = when {
                                     isGuideLoading -> "Loading guide..."
-                                    hasGuideSource -> "No Information"
+                                    hasGuideSource && guideAttempted -> "No guide data matched"
+                                    hasGuideSource -> "Guide pending..."
                                     else -> "No guide source"
                                 }
                                 ProgramsRow(

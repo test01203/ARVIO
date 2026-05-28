@@ -73,6 +73,8 @@ fun ChannelRow(
     onMoveUp: () -> Boolean = { false },
     onMoveDown: () -> Boolean = { false },
     onFocused: () -> Unit = {},
+    variantCount: Int = 1,
+    onOpenVariants: () -> Unit = {},
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
     modifier: Modifier = Modifier,
@@ -127,7 +129,9 @@ fun ChannelRow(
             }
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onFavoriteToggle,
+                onLongClick = {
+                    if (variantCount > 1) onOpenVariants() else onFavoriteToggle()
+                },
             )
             // Compose's combinedClickable doesn't catch DPAD long-press on
             // every TV — the key repeats before the long-click threshold
@@ -139,7 +143,9 @@ fun ChannelRow(
                     (ev.key == Key.DirectionCenter || ev.key == Key.Enter) &&
                     ev.nativeKeyEvent.repeatCount == 1
                 val isMenu = ev.type == KeyEventType.KeyDown && ev.key == Key.Menu
-                if (isLongHoldCenter || isMenu) {
+                if (isMenu && variantCount > 1) {
+                    onOpenVariants(); true
+                } else if (isLongHoldCenter || isMenu) {
                     onFavoriteToggle(); true
                 } else false
             },
@@ -227,7 +233,7 @@ fun ChannelRow(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            SmallPillBadge(channel.quality.label)
+            SmallPillBadge(if (variantCount > 1) "${channel.quality.label} ${variantCount}x" else channel.quality.label)
             SmallPillBadge(channel.lang)
         }
     }

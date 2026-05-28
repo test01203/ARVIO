@@ -472,7 +472,7 @@ fun buildCategoryTree(
     ).filter { it.count > 0 }
     val top = listOf(
         LiveCategory("fav", "Favorites", favoritesCount, CategoryIcon.Favorite),
-        LiveCategory("recent", "Recent", recentCount, CategoryIcon.Recent),
+        LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent),
         LiveCategory(
             id = "all",
             label = "All Channels",
@@ -625,7 +625,7 @@ fun buildCategoryTree(
     val channelIds = channels.asSequence().map { it.id }.toHashSet()
     val top = listOf(
         LiveCategory("fav", "Favorites", favorites.count { it in channelIds }, CategoryIcon.Favorite),
-        LiveCategory("recent", "Recent", recents.count { it in channelIds }, CategoryIcon.Recent),
+        LiveCategory("recent", "Recently Watched", recents.count { it in channelIds }, CategoryIcon.Recent),
         LiveCategory(
             id = "all",
             label = "All Channels",
