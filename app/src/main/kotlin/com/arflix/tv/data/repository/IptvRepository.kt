@@ -688,6 +688,10 @@ class IptvRepository @Inject constructor(
     }
 
     fun getCatchupUrl(channel: IptvChannel, program: IptvProgram): String {
+        return getCatchupUrlCandidates(channel, program).firstOrNull() ?: channel.streamUrl
+    }
+
+    fun getCatchupUrlCandidates(channel: IptvChannel, program: IptvProgram): List<String> {
         val startUnix = program.startUtcMillis / 1000L
         val endUnix = program.endUtcMillis / 1000L
         val durationMin = ((program.endUtcMillis - program.startUtcMillis) / 60_000L).coerceAtLeast(1L)
@@ -695,58 +699,143 @@ class IptvRepository @Inject constructor(
         val resolvedType = channel.catchupType?.lowercase(Locale.US)
             ?: if (resolveXtreamCredentials(channel.streamUrl) != null && resolveXtreamStreamId(channel) != null) "xtream" else "default"
 
-        return when (resolvedType) {
-            "xtream" -> {
-                val creds = resolveXtreamCredentials(channel.streamUrl) ?: return channel.streamUrl
-                val streamId = channel.xtreamStreamId ?: resolveXtreamStreamId(channel) ?: return channel.streamUrl
+        val candidates = when (resolvedType) {
+            "xtream", "xc", "xciptv", "timeshift" -> {
+                val creds = resolveXtreamCredentials(channel.streamUrl) ?: return listOf(channel.streamUrl)
+                val streamId = channel.xtreamStreamId ?: resolveXtreamStreamId(channel) ?: return listOf(channel.streamUrl)
                 val offset = getServerOffset(creds)
                 val serverStartMs = program.startUtcMillis + offset
                 val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(serverStartMs), ZoneId.of("UTC"))
                 val startStr = startDt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm"))
-                "${creds.baseUrl}/timeshift/${creds.username}/${creds.password}/$durationMin/$startStr/$streamId.ts"
+                buildList {
+                    channel.catchupSource?.takeIf { it.isNotBlank() }?.let {
+                        add(applyCatchupSourceTemplate(channel, it, program, serverStartMs, startUnix, endUnix, durationMin))
+                    }
+                    add(buildXtreamTimeshiftPathUrl(creds, streamId, startStr, durationMin))
+                    add(buildXtreamTimeshiftQueryUrl(creds, streamId, startStr, durationMin, includeStreamingPrefix = true))
+                    add(buildXtreamTimeshiftQueryUrl(creds, streamId, startStr, durationMin, includeStreamingPrefix = false))
+                }
             }
             "flussonic", "ts" -> {
                 val connector = if (channel.streamUrl.contains("?")) "&" else "?"
-                "${channel.streamUrl}${connector}utc=$startUnix"
+                listOf("${channel.streamUrl}${connector}utc=$startUnix")
             }
             "append", "shift" -> {
                 val connector = if (channel.streamUrl.contains("?")) "&" else "?"
-                "${channel.streamUrl}${connector}utc=$startUnix&lutc=$endUnix"
+                listOf("${channel.streamUrl}${connector}utc=$startUnix&lutc=$endUnix")
             }
             "default", "source" -> {
-                val source = channel.catchupSource ?: return channel.streamUrl
-                val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(program.startUtcMillis), ZoneId.of("UTC"))
-                source
-                    .replace("{utc}", startUnix.toString())
-                    .replace("{lutc}", endUnix.toString())
-                    .replace("{duration}", durationMin.toString())
-                    .replace("{Y}", startDt.format(DateTimeFormatter.ofPattern("yyyy")))
-                    .replace("{m}", startDt.format(DateTimeFormatter.ofPattern("MM")))
-                    .replace("{d}", startDt.format(DateTimeFormatter.ofPattern("dd")))
-                    .replace("{H}", startDt.format(DateTimeFormatter.ofPattern("HH")))
-                    .replace("{M}", startDt.format(DateTimeFormatter.ofPattern("mm")))
-                    .replace("{S}", startDt.format(DateTimeFormatter.ofPattern("ss")))
+                val source = channel.catchupSource ?: return listOf(channel.streamUrl)
+                listOf(applyCatchupSourceTemplate(channel, source, program, program.startUtcMillis, startUnix, endUnix, durationMin))
             }
             else -> {
                 // If catchup-source is present but type is unknown, try placeholder replacement anyway
                 if (!channel.catchupSource.isNullOrBlank()) {
-                    val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(program.startUtcMillis), ZoneId.of("UTC"))
-                    channel.catchupSource
-                        .replace("{utc}", startUnix.toString())
-                        .replace("{lutc}", endUnix.toString())
-                        .replace("{duration}", durationMin.toString())
-                        .replace("{Y}", startDt.format(DateTimeFormatter.ofPattern("yyyy")))
-                        .replace("{m}", startDt.format(DateTimeFormatter.ofPattern("MM")))
-                        .replace("{d}", startDt.format(DateTimeFormatter.ofPattern("dd")))
-                        .replace("{H}", startDt.format(DateTimeFormatter.ofPattern("HH")))
-                        .replace("{M}", startDt.format(DateTimeFormatter.ofPattern("mm")))
-                        .replace("{S}", startDt.format(DateTimeFormatter.ofPattern("ss")))
+                    listOf(applyCatchupSourceTemplate(channel, channel.catchupSource, program, program.startUtcMillis, startUnix, endUnix, durationMin))
                 } else {
-                    channel.streamUrl
+                    listOf(channel.streamUrl)
                 }
             }
         }
+        return candidates
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
     }
+
+    private fun applyCatchupSourceTemplate(
+        channel: IptvChannel,
+        source: String,
+        program: IptvProgram,
+        startForDateMs: Long,
+        startUnix: Long,
+        endUnix: Long,
+        durationMin: Long
+    ): String {
+        val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(startForDateMs), ZoneId.of("UTC"))
+        val endDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(program.endUtcMillis), ZoneId.of("UTC"))
+        val durationSec = ((program.endUtcMillis - program.startUtcMillis) / 1000L).coerceAtLeast(1L)
+        val templated = source
+            .replace("{utc}", startUnix.toString())
+            .replace("\${start}", startUnix.toString())
+            .replace("{start}", startUnix.toString())
+            .replace("{timestamp}", startUnix.toString())
+            .replace("\${timestamp}", startUnix.toString())
+            .replace("{lutc}", endUnix.toString())
+            .replace("\${end}", endUnix.toString())
+            .replace("{end}", endUnix.toString())
+            .replace("{duration}", durationMin.toString())
+            .replace("\${duration}", durationMin.toString())
+            .replace("{duration_sec}", durationSec.toString())
+            .replace("\${duration_sec}", durationSec.toString())
+            .replace("{Y}", startDt.format(DateTimeFormatter.ofPattern("yyyy")))
+            .replace("{m}", startDt.format(DateTimeFormatter.ofPattern("MM")))
+            .replace("{d}", startDt.format(DateTimeFormatter.ofPattern("dd")))
+            .replace("{H}", startDt.format(DateTimeFormatter.ofPattern("HH")))
+            .replace("{M}", startDt.format(DateTimeFormatter.ofPattern("mm")))
+            .replace("{S}", startDt.format(DateTimeFormatter.ofPattern("ss")))
+            .replace("{start:Y}", startDt.format(DateTimeFormatter.ofPattern("yyyy")))
+            .replace("{start:m}", startDt.format(DateTimeFormatter.ofPattern("MM")))
+            .replace("{start:d}", startDt.format(DateTimeFormatter.ofPattern("dd")))
+            .replace("{start:H}", startDt.format(DateTimeFormatter.ofPattern("HH")))
+            .replace("{start:M}", startDt.format(DateTimeFormatter.ofPattern("mm")))
+            .replace("{start:S}", startDt.format(DateTimeFormatter.ofPattern("ss")))
+            .replace("{end:Y}", endDt.format(DateTimeFormatter.ofPattern("yyyy")))
+            .replace("{end:m}", endDt.format(DateTimeFormatter.ofPattern("MM")))
+            .replace("{end:d}", endDt.format(DateTimeFormatter.ofPattern("dd")))
+            .replace("{end:H}", endDt.format(DateTimeFormatter.ofPattern("HH")))
+            .replace("{end:M}", endDt.format(DateTimeFormatter.ofPattern("mm")))
+            .replace("{end:S}", endDt.format(DateTimeFormatter.ofPattern("ss")))
+        return when {
+            templated.startsWith("http://", ignoreCase = true) || templated.startsWith("https://", ignoreCase = true) -> templated
+            templated.startsWith("/") -> channel.streamUrl.toHttpUrlOrNull()?.let { parsed ->
+                buildString {
+                    append(parsed.scheme)
+                    append("://")
+                    append(parsed.host)
+                    if (parsed.port != if (parsed.scheme == "https") 443 else 80) {
+                        append(":${parsed.port}")
+                    }
+                    append(templated)
+                }
+            } ?: templated
+            templated.startsWith("?") -> channel.streamUrl.substringBefore('?') + templated
+            templated.startsWith("&") -> channel.streamUrl + templated
+            else -> templated
+        }
+    }
+
+    private fun buildXtreamTimeshiftPathUrl(
+        creds: XtreamCredentials,
+        streamId: Int,
+        startStr: String,
+        durationMin: Long
+    ): String {
+        val encodedUser = urlEncodePathSegment(creds.username)
+        val encodedPass = urlEncodePathSegment(creds.password)
+        return "${creds.baseUrl}/timeshift/$encodedUser/$encodedPass/$durationMin/$startStr/$streamId.ts"
+    }
+
+    private fun buildXtreamTimeshiftQueryUrl(
+        creds: XtreamCredentials,
+        streamId: Int,
+        startStr: String,
+        durationMin: Long,
+        includeStreamingPrefix: Boolean
+    ): String {
+        val path = if (includeStreamingPrefix) "streaming/timeshift.php" else "timeshift.php"
+        return "${creds.baseUrl}/$path?username=${urlEncodeQuery(creds.username)}" +
+            "&password=${urlEncodeQuery(creds.password)}" +
+            "&stream=$streamId&start=${urlEncodeQuery(startStr)}&duration=$durationMin"
+    }
+
+    private fun urlEncodeQuery(value: String): String =
+        java.net.URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
+
+    private fun urlEncodePathSegment(value: String): String =
+        urlEncodeQuery(value).replace("%2F", "%252F")
 
     suspend fun clearConfig() {
         context.settingsDataStore.edit { prefs ->

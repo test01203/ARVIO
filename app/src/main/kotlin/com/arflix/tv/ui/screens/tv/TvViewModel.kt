@@ -928,10 +928,14 @@ class TvViewModel @Inject constructor(
     suspend fun resolvePlayableStreamUrl(
         channel: IptvChannel,
         program: IptvProgram? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        catchupAttempt: Int = 0
     ): String {
         val rawUrl = if (program != null) {
-            iptvRepository.getCatchupUrl(channel, program)
+            val candidates = iptvRepository.getCatchupUrlCandidates(channel, program)
+            candidates.getOrNull(catchupAttempt.coerceAtLeast(0))
+                ?: candidates.lastOrNull()
+                ?: iptvRepository.getCatchupUrl(channel, program)
         } else {
             channel.streamUrl
         }

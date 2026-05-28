@@ -812,7 +812,7 @@ fun LiveTvScreen(
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
         val sourceChannel = playingChannel?.source
         val stream = if (sourceChannel != null) {
-            viewModel.resolvePlayableStreamUrl(sourceChannel, playingCatchupProgram)
+            viewModel.resolvePlayableStreamUrl(sourceChannel, playingCatchupProgram, catchupAttempt = 0)
         } else {
             rawStream
         }
@@ -874,7 +874,8 @@ fun LiveTvScreen(
                         viewModel.resolvePlayableStreamUrl(
                             channel = retryChannel,
                             program = retryProgram,
-                            forceRefresh = true
+                            forceRefresh = true,
+                            catchupAttempt = if (retryProgram != null) nextAttempt else 0
                         )
                     } else {
                         prepared
