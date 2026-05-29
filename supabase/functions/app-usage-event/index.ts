@@ -1,9 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, x-client-info, content-type, x-user-token",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+// CORS: restrict origins using env `CORS_ALLOWED_ORIGINS` (comma-separated).
+const DEFAULT_ALLOWED_ORIGINS = (Deno.env.get('CORS_ALLOWED_ORIGINS') || 'https://auth.arvio.tv,https://arvio.tv').split(',').map(s => s.trim()).filter(Boolean)
+
+function corsHeaders(req: Request) {
+  const origin = req.headers.get('origin') || ''
+  const allowed = DEFAULT_ALLOWED_ORIGINS
+  const allowOrigin = allowed.includes(origin) ? origin : 'null'
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Headers': 'authorization, apikey, x-client-info, content-type, x-user-token',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  }
 }
 
 const RATE_LIMIT = 120
@@ -37,10 +45,10 @@ setInterval(() => {
   }
 }, RATE_WINDOW_MS)
 
-function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeaders(req), "Content-Type": "application/json" },
   })
 }
 
@@ -86,8 +94,8 @@ async function resolveUserId(supabaseUrl: string, anonKey: string, token: string
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
-  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405)
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(req) })
+  if (req.method !== "POST") return jsonResponse(req, { error: "Method not allowed" }, 405)
 
   try {
     const anonHeader = req.headers.get("apikey")
@@ -98,8 +106,8 @@ serve(async (req) => {
     const hasValidBearer = !!authHeader && authHeader.startsWith("Bearer ") &&
       !!expectedAnon && authHeader.replace("Bearer ", "") === expectedAnon
 
-    if (!hasValidApiKey && !hasValidBearer) return jsonResponse({ error: "Unauthorized" }, 401)
-    if (!checkRateLimit(req)) return jsonResponse({ error: "Rate limit exceeded" }, 429)
+    if (!hasValidApiKey && !hasValidBearer) return jsonResponse(req, { error: "Unauthorized" }, 401)
+    if (!checkRateLimit(req)) return jsonResponse(req, { error: "Rate limit exceeded" }, 429)
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")
     const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -109,10 +117,10 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({})) as Record<string, unknown>
     const eventName = cleanText(body.event_name, 40) || "app_open"
-    if (eventName !== "app_open") return jsonResponse({ error: "Unsupported event" }, 400)
+    if (eventName !== "app_open") return jsonResponse(req, { error: "Unsupported event" }, 400)
 
     const installId = cleanText(body.install_id, 128)
-    if (!installId || installId.length < 8) return jsonResponse({ error: "Invalid install_id" }, 400)
+    if (!installId || installId.length < 8) return jsonResponse(req, { error: "Invalid install_id" }, 400)
 
     const userToken = cleanText(req.headers.get("x-user-token"), 4096)
     const userId = await resolveUserId(supabaseUrl, expectedAnon, userToken)
@@ -151,9 +159,9 @@ serve(async (req) => {
       throw new Error(`Usage upsert failed: ${response.status} ${text}`)
     }
 
-    return jsonResponse({ ok: true })
+    return jsonResponse(req, { ok: true })
   } catch (error) {
     console.error(error)
-    return jsonResponse({ error: "Internal server error" }, 500)
+    return jsonResponse(req, { error: "Internal server error" }, 500)
   }
 })
