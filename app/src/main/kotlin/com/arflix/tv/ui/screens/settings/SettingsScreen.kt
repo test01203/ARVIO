@@ -1604,6 +1604,7 @@ fun SettingsScreen(
         if (showIptvInput) {
             InputModal(
                 title = if (editingIptvIndex >= 0) "Edit TV Playlist" else "Add TV Playlist",
+                supportingText = "EPG supports multiple sources for this playlist. Add one URL per line; ARVIO will match them in order.",
                 fields = listOf(
                     InputField(
                         label = "Playlist Name",
@@ -1630,9 +1631,10 @@ fun SettingsScreen(
                         onValueChange = { iptvEditXtreamPass = it }
                     ),
                     InputField(
-                        label = "EPG URLs (Optional)",
+                        label = "EPG Sources (Optional)",
                         value = iptvEditEpg,
-                        placeholder = "One per line, comma or semicolon separated",
+                        placeholder = "https://provider.com/xmltv.xml\nhttps://backup.com/epg.xml.gz",
+                        helper = "One URL per line. Commas, semicolons, and pipes are also accepted.",
                         singleLine = false,
                         onValueChange = { iptvEditEpg = it }
                     )
@@ -1651,14 +1653,15 @@ fun SettingsScreen(
                     } else {
                         iptvEditEpg
                     }
+                    val finalEpgUrls = splitSettingsEpgInput(finalEpgUrl)
                     val updated = uiState.iptvPlaylists.toMutableList()
                     val entry = com.arflix.tv.data.repository.IptvPlaylistEntry(
                         id = updated.getOrNull(editingIptvIndex)?.id ?: "list_${editingIptvIndex + 2}".takeIf { editingIptvIndex >= 0 } ?: "list_${updated.size + 1}",
                         name = iptvEditName,
                         m3uUrl = finalM3uUrl,
-                        epgUrl = finalEpgUrl,
+                        epgUrl = finalEpgUrls.firstOrNull().orEmpty(),
                         enabled = iptvEditEnabled,
-                        epgUrls = splitSettingsEpgInput(finalEpgUrl)
+                        epgUrls = finalEpgUrls
                     )
                     if (editingIptvIndex in updated.indices) updated[editingIptvIndex] = entry else updated.add(entry)
                     viewModel.saveIptvPlaylists(updated)
@@ -7757,6 +7760,7 @@ data class InputField(
     val label: String,
     val value: String,
     val placeholder: String = "",
+    val helper: String = "",
     val isSecret: Boolean = false,
     val singleLine: Boolean = true,
     val onValueChange: (String) -> Unit
@@ -8060,10 +8064,12 @@ private fun InputModal(
     onDismiss: () -> Unit
 ) {
     var focusedIndex by remember(title, fields.size) { mutableIntStateOf(0) }
+    var lastFocusedFieldIndex by remember(title, fields.size) { mutableStateOf<Int?>(null) }
     val totalItems = fields.size + 3 // inputs + paste + cancel + confirm
+    val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val formMaxHeight = when {
-        fields.size >= 5 -> 280.dp
-        fields.size >= 4 -> 260.dp
+        fields.size >= 5 -> if (isTouchDevice) 360.dp else 390.dp
+        fields.size >= 4 -> if (isTouchDevice) 330.dp else 350.dp
         else -> 290.dp
     }
 
@@ -8076,6 +8082,29 @@ private fun InputModal(
     val editTextRefs = remember { MutableList<EditText?>(fields.size) { null } }
 
     fun anyEditTextFocused(): Boolean = editTextRefs.any { it?.hasFocus() == true }
+
+    fun pasteTargetIndex(): Int {
+        if (focusedIndex in 0 until fields.size) return focusedIndex
+        lastFocusedFieldIndex?.takeIf { it in 0 until fields.size }?.let { return it }
+        return fields.indexOfFirst { field ->
+            field.label.contains("url", ignoreCase = true) ||
+                field.label.contains("server", ignoreCase = true) ||
+                field.label.contains("host", ignoreCase = true)
+        }.takeIf { it >= 0 } ?: if (fields.size > 1) 1 else 0
+    }
+
+    fun pasteClipboardIntoTarget() {
+        val clipboardText = clipboardManager.getText()?.text ?: return
+        val targetIndex = pasteTargetIndex()
+        val target = fields.getOrNull(targetIndex) ?: return
+        target.onValueChange(clipboardText)
+        editTextRefs.getOrNull(targetIndex)?.let { edit ->
+            edit.setText(clipboardText)
+            edit.setSelection(edit.text?.length ?: 0)
+            edit.clearFocus()
+        }
+        modalFocusRequester.requestFocus()
+    }
 
     fun hideKeyboardAll() {
         val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
@@ -8109,6 +8138,7 @@ private fun InputModal(
     // Scroll proportionally so the active field sits roughly in the middle of the viewport.
     LaunchedEffect(focusedIndex) {
         if (focusedIndex in 0 until fields.size) {
+            lastFocusedFieldIndex = focusedIndex
             val approxFieldHeightPx = 260 // rough pixels per field at typical density
             val targetScroll = (focusedIndex * approxFieldHeightPx).coerceAtLeast(0)
             runCatching { formScrollState.animateScrollTo(targetScroll) }
@@ -8138,15 +8168,15 @@ private fun InputModal(
             Column(
                 modifier = Modifier
                     .then(
-                        if (LocalDeviceType.current.isTouchDevice()) Modifier.fillMaxWidth(0.92f).widthIn(max = 600.dp)
-                        else Modifier.width(560.dp)
+                        if (isTouchDevice) Modifier.fillMaxWidth(0.92f).widthIn(max = 640.dp)
+                        else Modifier.width(620.dp)
                     )
                     .navigationBarsPadding()
                     .imePadding()
-                    .heightIn(max = 560.dp)
+                    .heightIn(max = if (isTouchDevice) 620.dp else 660.dp)
                     .background(BackgroundElevated, RoundedCornerShape(14.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
-                    .padding(horizontal = if (LocalDeviceType.current.isTouchDevice()) 16.dp else 20.dp, vertical = 18.dp)
+                    .padding(horizontal = if (isTouchDevice) 16.dp else 20.dp, vertical = 18.dp)
                     .focusRequester(modalFocusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->
@@ -8190,25 +8220,7 @@ private fun InputModal(
                                             true
                                         }
                                         focusedIndex == fields.size -> {
-                                            val clipboardText = clipboardManager.getText()?.text
-                                            // Paste into the URL/server/host field when present,
-                                            // otherwise fall back to the historical second field.
-                                            val targetIndex = fields.indexOfFirst { field ->
-                                                field.label.contains("url", ignoreCase = true) ||
-                                                    field.label.contains("server", ignoreCase = true) ||
-                                                    field.label.contains("host", ignoreCase = true)
-                                            }.takeIf { it >= 0 } ?: if (fields.size > 1) 1 else 0
-                                            val target = fields.getOrNull(targetIndex)
-                                            if (clipboardText != null && target != null) {
-                                                target.onValueChange(clipboardText)
-                                                // Also update the EditText directly to keep in sync
-                                                editTextRefs.getOrNull(targetIndex)?.let { edit ->
-                                                    edit.setText(clipboardText)
-                                                    edit.clearFocus()
-                                                }
-                                            }
-                                            // Ensure Compose focus stays on the modal for D-pad nav
-                                            modalFocusRequester.requestFocus()
+                                            pasteClipboardIntoTarget()
                                             true
                                         }
                                         focusedIndex == fields.size + 1 -> {
@@ -8296,6 +8308,16 @@ private fun InputModal(
                                     color = if (isFocused) Pink else TextSecondary
                                 )
                             }
+                            if (field.helper.isNotBlank()) {
+                                Text(
+                                    text = field.helper,
+                                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                                    color = TextSecondary.copy(alpha = 0.68f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(start = 30.dp, bottom = 6.dp)
+                                )
+                            }
 
                             val regexFieldFocusColor = resolveAccentColor(fallback = Pink)
                             Box(
@@ -8355,6 +8377,9 @@ private fun InputModal(
                                             setOnFocusChangeListener { _, hasFocus ->
                                                 if (hasFocus && focusedIndex != index) {
                                                     focusedIndex = index
+                                                }
+                                                if (hasFocus) {
+                                                    lastFocusedFieldIndex = index
                                                 }
                                             }
 
@@ -8424,6 +8449,12 @@ private fun InputModal(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 val isPasteFocused = focusedIndex == fields.size
+                val pasteTargetLabel = fields.getOrNull(pasteTargetIndex())
+                    ?.label
+                    ?.substringBefore("(")
+                    ?.trim()
+                    ?.ifBlank { "field" }
+                    ?: "field"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -8438,17 +8469,7 @@ private fun InputModal(
                             shape = RoundedCornerShape(10.dp)
                         )
                         .clickable {
-                            val clipboardText = clipboardManager.getText()?.text
-                            // Paste into the URL field (index 1) when available,
-                            // otherwise fall back to the first field.
-                            val targetIndex = if (fields.size > 1) 1 else 0
-                            val target = fields.getOrNull(targetIndex)
-                            if (clipboardText != null && target != null) {
-                                target.onValueChange(clipboardText)
-                                editTextRefs.getOrNull(targetIndex)?.let { edit ->
-                                    edit.setText(clipboardText)
-                                }
-                            }
+                            pasteClipboardIntoTarget()
                         }
                         .padding(vertical = 11.dp, horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -8462,7 +8483,7 @@ private fun InputModal(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Paste from Clipboard",
+                        text = "Paste into $pasteTargetLabel",
                         style = ArflixTypography.button,
                         color = if (isPasteFocused) Color.Black else Color.White
                     )
