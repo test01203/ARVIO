@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -173,11 +175,16 @@ internal fun FullscreenGuideOverlay(
         exit = exit,
         modifier = modifier.fillMaxSize(),
     ) {
+        val panelShape = if (isTouchDevice) {
+            RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
+        } else {
+            RoundedCornerShape(18.dp)
+        }
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.42f))
+                    .background(Color.Black.copy(alpha = if (isTouchDevice) 0.52f else 0.42f))
                     .clickable(
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                         indication = null,
@@ -191,8 +198,8 @@ internal fun FullscreenGuideOverlay(
                         if (isTouchDevice) {
                             Modifier
                                 .fillMaxWidth()
-                                .fillMaxHeight(0.74f)
-                                .padding(horizontal = 10.dp, vertical = 10.dp)
+                                .fillMaxHeight(0.82f)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
                         } else {
                             Modifier
                                 .width(470.dp)
@@ -200,18 +207,18 @@ internal fun FullscreenGuideOverlay(
                                 .padding(top = 24.dp, end = 24.dp, bottom = 24.dp)
                         }
                     )
-                    .clip(RoundedCornerShape(if (isTouchDevice) 22.dp else 18.dp))
+                    .clip(panelShape)
                     .border(
-                        BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-                        RoundedCornerShape(if (isTouchDevice) 22.dp else 18.dp)
+                        BorderStroke(1.dp, Color.White.copy(alpha = if (isTouchDevice) 0.16f else 0.12f)),
+                        panelShape
                     )
                     .background(
                         Brush.verticalGradient(
-                            0f to Color(0xF2191B22),
+                            0f to if (isTouchDevice) Color(0xF520222B) else Color(0xF2191B22),
                             1f to Color(0xF0090A0E),
                         )
                     )
-                    .padding(18.dp),
+                    .padding(if (isTouchDevice) 14.dp else 18.dp),
             ) {
                 FullscreenGuideContent(
                     channel = channel,
@@ -252,8 +259,12 @@ private fun FullscreenGuideContent(
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(if (isTouchDevice) 10.dp else 14.dp),
     ) {
+        if (isTouchDevice) {
+            GuideSheetHandle()
+        }
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -261,7 +272,7 @@ private fun FullscreenGuideContent(
             if (isTouchDevice) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.08f))
                         .clickable(onClick = onDismiss),
@@ -271,22 +282,22 @@ private fun FullscreenGuideContent(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Close guide",
                         tint = LiveColors.Fg,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(21.dp),
                     )
                 }
             }
-            ChannelLogo(channel = channel, size = if (isTouchDevice) 42.dp else 48.dp)
+            ChannelLogo(channel = channel, size = if (isTouchDevice) 40.dp else 48.dp)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = channel.name,
                     style = LiveType.ChannelName.copy(
                         color = LiveColors.Fg,
-                        fontSize = if (isTouchDevice) 18.sp else 19.sp,
+                        fontSize = if (isTouchDevice) 17.sp else 19.sp,
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 5.dp else 6.dp)) {
                     GuideChip("CH ${channel.number}", LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
                     GuideChip(channel.quality.label, LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
                     if (catchupSupported) {
@@ -296,23 +307,26 @@ private fun FullscreenGuideContent(
             }
         }
 
-        Text(
-            text = "Browse the last 48 hours and upcoming guide without leaving playback.",
-            style = LiveType.BodySynopsis.copy(
-                color = LiveColors.FgDim,
-                fontSize = if (isTouchDevice) 12.sp else 11.sp,
-            ),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = if (isTouchDevice) {
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White.copy(alpha = 0.055f))
+                    .padding(4.dp)
+            } else {
+                Modifier
+            },
+            horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 4.dp else 8.dp)
+        ) {
             GuideTabButton(
                 label = "Past",
                 count = pastCount,
                 selected = selectedTab == FullscreenGuideTab.Past,
                 enabled = catchupSupported,
                 onClick = { onSelectedTabChange(FullscreenGuideTab.Past) },
+                isTouchDevice = isTouchDevice,
+                modifier = if (isTouchDevice) Modifier.weight(1f) else Modifier,
             )
             GuideTabButton(
                 label = "Now",
@@ -320,6 +334,8 @@ private fun FullscreenGuideContent(
                 selected = selectedTab == FullscreenGuideTab.Now,
                 enabled = true,
                 onClick = { onSelectedTabChange(FullscreenGuideTab.Now) },
+                isTouchDevice = isTouchDevice,
+                modifier = if (isTouchDevice) Modifier.weight(1f) else Modifier,
             )
             GuideTabButton(
                 label = "Later",
@@ -327,11 +343,14 @@ private fun FullscreenGuideContent(
                 selected = selectedTab == FullscreenGuideTab.Later,
                 enabled = true,
                 onClick = { onSelectedTabChange(FullscreenGuideTab.Later) },
+                isTouchDevice = isTouchDevice,
+                modifier = if (isTouchDevice) Modifier.weight(1f) else Modifier,
             )
         }
 
         GuideLiveButton(
             isSelected = selectedProgram == null,
+            isTouchDevice = isTouchDevice,
             onClick = { onProgramSelect(null) },
         )
 
@@ -356,6 +375,7 @@ private fun FullscreenGuideContent(
                     GuideEmptyState(
                         selectedTab = selectedTab,
                         catchupSupported = catchupSupported,
+                        isTouchDevice = isTouchDevice,
                     )
                 }
             } else {
@@ -368,6 +388,7 @@ private fun FullscreenGuideContent(
                         selected = item.program == selectedProgram,
                         nowMillis = nowMillis,
                         focusRequester = if (index == 0) firstFocusRequester else null,
+                        isTouchDevice = isTouchDevice,
                         onClick = {
                             when (item.state) {
                                 GuideProgramState.PastPlayable -> onProgramSelect(item.program)
@@ -382,10 +403,29 @@ private fun FullscreenGuideContent(
     }
 }
 
+@Composable
+private fun GuideSheetHandle() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Spacer(
+            modifier = Modifier
+                .width(42.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color.White.copy(alpha = 0.24f))
+        )
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun GuideLiveButton(
     isSelected: Boolean,
+    isTouchDevice: Boolean,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -410,7 +450,8 @@ private fun GuideLiveButton(
                 }
             }
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .heightIn(min = if (isTouchDevice) 48.dp else 0.dp)
+            .padding(horizontal = 12.dp, vertical = if (isTouchDevice) 9.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -418,21 +459,23 @@ private fun GuideLiveButton(
             imageVector = Icons.Default.PlayArrow,
             contentDescription = null,
             tint = LiveColors.Accent,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(if (isTouchDevice) 19.dp else 20.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "Go Live",
-                style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 14.sp),
+                style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = if (isTouchDevice) 13.sp else 14.sp),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = "Return to the live broadcast",
-                style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 10.sp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (!isTouchDevice) {
+                Text(
+                    text = "Return to the live broadcast",
+                    style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 10.sp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         GuideChip("LIVE", Color.White, LiveColors.LiveRed)
     }
@@ -445,6 +488,7 @@ private fun GuideProgramRow(
     selected: Boolean,
     nowMillis: Long,
     focusRequester: FocusRequester?,
+    isTouchDevice: Boolean,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -479,13 +523,14 @@ private fun GuideProgramRow(
             .background(bg)
             .border(BorderStroke(1.dp, border), RoundedCornerShape(12.dp))
             .clickable(enabled = playable, onClick = onClick)
-            .padding(12.dp),
+            .heightIn(min = if (isTouchDevice) 70.dp else 0.dp)
+            .padding(if (isTouchDevice) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 10.dp else 12.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(if (isTouchDevice) 38.dp else 42.dp)
                 .clip(CircleShape)
                 .background(
                     when (item.state) {
@@ -508,7 +553,7 @@ private fun GuideProgramRow(
                     GuideProgramState.Live -> LiveColors.LiveRed
                     GuideProgramState.Future -> LiveColors.FgDim
                 },
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(if (isTouchDevice) 20.dp else 22.dp),
             )
         }
 
@@ -522,7 +567,9 @@ private fun GuideProgramRow(
             ) {
                 Text(
                     text = formatTimeWindow(item.program),
-                    style = LiveType.TimeMono.copy(color = LiveColors.FgDim, fontSize = 10.sp),
+                    style = LiveType.TimeMono.copy(color = LiveColors.FgDim, fontSize = if (isTouchDevice) 9.sp else 10.sp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 GuideChip(
                     label = when (item.state) {
@@ -546,7 +593,7 @@ private fun GuideProgramRow(
                 text = item.program.title,
                 style = LiveType.ProgramTitle.copy(
                     color = if (item.state == GuideProgramState.Future) LiveColors.FgDim else LiveColors.Fg,
-                    fontSize = 15.sp,
+                    fontSize = if (isTouchDevice) 14.sp else 15.sp,
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -554,8 +601,8 @@ private fun GuideProgramRow(
             if (!item.program.description.isNullOrBlank()) {
                 Text(
                     text = item.program.description!!,
-                    style = LiveType.BodySynopsis.copy(color = LiveColors.FgMute, fontSize = 10.sp),
-                    maxLines = 2,
+                    style = LiveType.BodySynopsis.copy(color = LiveColors.FgMute, fontSize = if (isTouchDevice) 9.sp else 10.sp),
+                    maxLines = if (isTouchDevice) 1 else 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -581,30 +628,31 @@ private fun GuideProgramRow(
 private fun GuideEmptyState(
     selectedTab: FullscreenGuideTab,
     catchupSupported: Boolean,
+    isTouchDevice: Boolean,
 ) {
     val text = when {
         selectedTab == FullscreenGuideTab.Past && !catchupSupported ->
-            "This channel does not expose catchup playback."
+            "Catchup is not available for this channel."
         selectedTab == FullscreenGuideTab.Past ->
-            "No playable shows were found in the last 48 hours yet."
+            "No replay programmes yet."
         selectedTab == FullscreenGuideTab.Now ->
-            "No current programme data is available."
+            "No current programme."
         else ->
-            "No upcoming programme data is available yet."
+            "No upcoming programmes yet."
     }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(150.dp)
+            .height(if (isTouchDevice) 118.dp else 150.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(Color.White.copy(alpha = 0.055f))
             .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(14.dp))
-            .padding(18.dp),
+            .padding(if (isTouchDevice) 14.dp else 18.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
-            style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 13.sp),
+            style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = if (isTouchDevice) 12.sp else 13.sp),
             maxLines = 3,
             overflow = TextOverflow.Ellipsis,
         )
@@ -619,6 +667,8 @@ private fun GuideTabButton(
     selected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    isTouchDevice: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val fg = when {
         selected -> LiveColors.Bg
@@ -631,15 +681,22 @@ private fun GuideTabButton(
         else -> Color.White.copy(alpha = 0.035f)
     }
     Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
+        modifier = modifier
+            .heightIn(min = if (isTouchDevice) 38.dp else 0.dp)
+            .clip(RoundedCornerShape(if (isTouchDevice) 10.dp else 999.dp))
             .background(bg)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = if (isTouchDevice) 8.dp else 12.dp, vertical = if (isTouchDevice) 8.dp else 7.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.Center,
     ) {
-        Text(label, style = LiveType.Badge.copy(color = fg, fontSize = 11.sp))
+        Text(
+            label,
+            style = LiveType.Badge.copy(color = fg, fontSize = 11.sp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.width(6.dp))
         Text(count.toString(), style = LiveType.Badge.copy(color = fg.copy(alpha = 0.74f), fontSize = 10.sp))
     }
 }
