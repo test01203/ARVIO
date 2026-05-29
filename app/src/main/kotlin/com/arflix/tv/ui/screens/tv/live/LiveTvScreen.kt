@@ -241,15 +241,16 @@ fun LiveTvScreen(
                 categoryId = selectedCategoryId,
                 favorites = favSet,
                 recents = recents.value,
+                hiddenGroups = hiddenGroupSet,
                 limit = initialLimit,
             )
         }
-        val initialIndex = withContext(Dispatchers.Default) { buildCategoryIndex(initialChannels) }
+        val initialIndex = withContext(Dispatchers.Default) { buildCategoryIndex(initialChannels, hiddenGroupSet) }
         val initialTree = withContext(Dispatchers.Default) {
             buildCategoryTree(
                 channels = initialChannels,
-                favoritesCount = favSet.count { it in initialIndex.byId },
-                recentCount = recents.value.count { it in initialIndex.byId },
+                favoritesCount = favSet.count { initialIndex.isVisibleNonAdultChannel(it) },
+                recentCount = recents.value.count { initialIndex.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
             )
@@ -262,12 +263,12 @@ fun LiveTvScreen(
         val enriched = withContext(Dispatchers.Default) {
             snapshot.mapIndexed { idx, ch -> ch.enrich(100 + idx) }
         }
-        val index = withContext(Dispatchers.Default) { buildCategoryIndex(enriched) }
+        val index = withContext(Dispatchers.Default) { buildCategoryIndex(enriched, hiddenGroupSet) }
         val tree = withContext(Dispatchers.Default) {
             buildCategoryTree(
                 channels = enriched,
-                favoritesCount = favSet.count { it in index.byId },
-                recentCount = recents.value.count { it in index.byId },
+                favoritesCount = favSet.count { index.isVisibleNonAdultChannel(it) },
+                recentCount = recents.value.count { index.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
             )
@@ -281,12 +282,11 @@ fun LiveTvScreen(
     LaunchedEffect(favSet, hiddenGroupSet, state.snapshot.groupOrder, recents.value, enrichedState.value.all) {
         val current = enrichedState.value
         if (current === EnrichedChannels.Empty) return@LaunchedEffect
-        val byId = current.index.byId
         val tree = withContext(Dispatchers.Default) {
             buildCategoryTree(
                 channels = current.all,
-                favoritesCount = favSet.count { it in byId },
-                recentCount = recents.value.count { it in byId },
+                favoritesCount = favSet.count { current.index.isVisibleNonAdultChannel(it) },
+                recentCount = recents.value.count { current.index.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
             )
@@ -325,12 +325,12 @@ fun LiveTvScreen(
                 current.all.filter(providerMatcher(selectedProviderId, state.config))
             }
         }
-        val index = withContext(Dispatchers.Default) { buildCategoryIndex(visibleChannels) }
+        val index = withContext(Dispatchers.Default) { buildCategoryIndex(visibleChannels, hiddenGroupSet) }
         val tree = withContext(Dispatchers.Default) {
             buildCategoryTree(
                 channels = visibleChannels,
-                favoritesCount = favSet.count { it in index.byId },
-                recentCount = recents.value.count { it in index.byId },
+                favoritesCount = favSet.count { index.isVisibleNonAdultChannel(it) },
+                recentCount = recents.value.count { index.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
             )

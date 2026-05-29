@@ -133,10 +133,10 @@ fun variantGroupKey(channel: EnrichedChannel): String {
 }
 
 fun buildVariantGroups(channels: List<EnrichedChannel>): Map<String, List<EnrichedChannel>> {
-    return channels
-        .groupBy(::variantGroupKey)
-        .filterValues { it.size > 1 }
-        .mapValues { (_, variants) -> variants.sortedWith(compareByDescending<EnrichedChannel> { it.quality.rank() }.thenBy { it.number }) }
+    // Keep IPTV channel rows exactly as the provider supplied them. Collapsing
+    // variants hides provider-specific HD/SD/catchup rows and mixes playlists,
+    // which makes EPG and catchup selection unpredictable.
+    return emptyMap()
 }
 
 fun collapseChannelVariants(

@@ -235,11 +235,15 @@ fun EpgGrid(
         keepChannelFocus(idx)
     }
 
-    LaunchedEffect(windowStartMillis) {
-        with(density) {
-            val nowOffsetMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
-            val targetPx = (nowOffsetMin * pxPerMin).dp.toPx().toInt() - 30.dp.toPx().toInt()
-            hScroll.scrollTo(targetPx.coerceAtLeast(0))
+    LaunchedEffect(windowStartMillis, channels.size, compact) {
+        repeat(20) { attempt ->
+            with(density) {
+                val nowOffsetMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
+                val targetPx = (nowOffsetMin * pxPerMin).dp.toPx().toInt() - 30.dp.toPx().toInt()
+                hScroll.scrollTo(targetPx.coerceIn(0, hScroll.maxValue.coerceAtLeast(0)))
+            }
+            if (hScroll.maxValue > 0) return@LaunchedEffect
+            if (attempt < 19) delay(50L)
         }
     }
 

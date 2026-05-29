@@ -243,7 +243,7 @@ class IptvRepository @Inject constructor(
     private val xmlTvPastWindowMs = 48L * 60L * 60_000L
     private val xmlTvFutureWindowMs = 48L * 60L * 60_000L
     private val completeEpgCoverageTarget = 0.98f
-    private val xtreamShortEpgLimit = 8
+    private val xtreamShortEpgLimit = 24
     private val startupShortEpgChannelLimit = 1200
     private val fullCatchupHistoryChannelLimit = 4
     private val xtreamShortEpgBatchSize = 512

@@ -40,6 +40,7 @@ data class EnrichedChannel(
 data class LiveCategoryIndex(
     val byCategory: Map<String, List<EnrichedChannel>>,
     val byId: Map<String, EnrichedChannel>,
+    val hiddenIds: Set<String> = emptySet(),
 ) {
     fun channelsFor(
         categoryId: String,
@@ -47,8 +48,8 @@ data class LiveCategoryIndex(
         recents: Collection<String>,
     ): List<EnrichedChannel> {
         return when (categoryId) {
-            "fav" -> favorites.mapNotNull(byId::get).filterNot { it.isAdult }
-            "recent" -> recents.toList().asReversed().mapNotNull(byId::get).filterNot { it.isAdult }
+            "fav" -> favorites.mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds }
+            "recent" -> recents.toList().asReversed().mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds }
             else -> byCategory[categoryId].orEmpty()
         }
     }
@@ -56,6 +57,11 @@ data class LiveCategoryIndex(
     companion object {
         val Empty = LiveCategoryIndex(emptyMap(), emptyMap())
     }
+}
+
+fun LiveCategoryIndex.isVisibleNonAdultChannel(channelId: String): Boolean {
+    val channel = byId[channelId] ?: return false
+    return !channel.isAdult && channelId !in hiddenIds
 }
 
 private data class ChannelTraits(
@@ -328,6 +334,22 @@ private fun playlistGroupLabel(group: String): String {
     return group.trim().ifBlank { "Ungrouped" }
 }
 
+private fun playlistGroupKey(playlistId: String, group: String): String {
+    return com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, playlistGroupLabel(group))
+}
+
+fun isHiddenPlaylistGroup(channel: EnrichedChannel, hiddenGroups: Set<String>): Boolean {
+    if (hiddenGroups.isEmpty()) return false
+    val playlistId = channel.id.substringBefore(':')
+    return playlistGroupKey(playlistId, channel.source.group) in hiddenGroups
+}
+
+private fun isHiddenPlaylistGroup(channel: IptvChannel, hiddenGroups: Set<String>): Boolean {
+    if (hiddenGroups.isEmpty()) return false
+    val playlistId = channel.id.substringBefore(':')
+    return playlistGroupKey(playlistId, channel.group) in hiddenGroups
+}
+
 fun playlistGroupCategoryId(playlistId: String, group: String): String {
     val normalized = playlistGroupLabel(group).lowercase()
     return "grp:$playlistId:${normalized.hashCode().toUInt().toString(16)}"
@@ -374,11 +396,14 @@ fun buildCategoryTree(
     channels.forEach { channel ->
         val playlistId = channel.id.substringBefore(':')
         val groupLabel = playlistGroupLabel(channel.source.group)
-        val groupKey = com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(playlistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, channel.source.group)
         val targetCounts = if (groupKey in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
         val groupCount = targetCounts[groupId]?.second ?: 0
         targetCounts[groupId] = groupLabel to (groupCount + 1)
+        if (groupKey in hiddenPlaylistGroups) {
+            return@forEach
+        }
 
         if (channel.isAdult) {
             adultCount += 1
@@ -548,11 +573,14 @@ fun buildCategoryTree(
         val playlistId = channel.id.substringBefore(':')
         val traits = channel.traits()
         val groupLabel = playlistGroupLabel(channel.group)
-        val groupKey = com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(playlistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, channel.group)
         val targetCounts = if (groupKey in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
         val groupCount = targetCounts[groupId]?.second ?: 0
         targetCounts[groupId] = groupLabel to (groupCount + 1)
+        if (groupKey in hiddenPlaylistGroups) {
+            return@forEach
+        }
 
         if (traits.isAdult) {
             adultCount += 1
@@ -640,7 +668,10 @@ fun buildCategoryTree(
         }
 
     val adultCategories = listOf(LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock)).filter { it.count > 0 }
-    val channelIds = channels.asSequence().map { it.id }.toHashSet()
+    val channelIds = channels.asSequence()
+        .filterNot { channel -> isAdultGroup(channel.group, channel.name) || isHiddenPlaylistGroup(channel, hiddenGroups) }
+        .map { it.id }
+        .toHashSet()
     val top = listOf(
         LiveCategory("fav", "Favorites", favorites.count { it in channelIds }, CategoryIcon.Favorite),
         LiveCategory("recent", "Recently Watched", recents.count { it in channelIds }, CategoryIcon.Recent),
@@ -755,13 +786,14 @@ fun buildInitialCategoryChannels(
     categoryId: String,
     favorites: Set<String>,
     recents: Set<String>,
+    hiddenGroups: Set<String> = emptySet(),
     limit: Int,
 ): List<EnrichedChannel> {
     if (channels.isEmpty() || limit <= 0) return emptyList()
     if (categoryId == "all") {
         return buildList(limit.coerceAtMost(channels.size)) {
             channels.forEachIndexed { index, channel ->
-                if (!isAdultGroup(channel.group, channel.name)) {
+                if (!isAdultGroup(channel.group, channel.name) && !isHiddenPlaylistGroup(channel, hiddenGroups)) {
                     add(channel.enrichForFastStartup(100 + index))
                     if (size >= limit) return@buildList
                 }
@@ -771,7 +803,7 @@ fun buildInitialCategoryChannels(
     if (categoryId == "fav") {
         return buildList(limit.coerceAtMost(favorites.size)) {
             channels.forEachIndexed { index, channel ->
-                if (channel.id in favorites && !isAdultGroup(channel.group, channel.name)) {
+                if (channel.id in favorites && !isAdultGroup(channel.group, channel.name) && !isHiddenPlaylistGroup(channel, hiddenGroups)) {
                     add(channel.enrichForFastStartup(100 + index))
                     if (size >= limit) return@buildList
                 }
@@ -783,7 +815,7 @@ fun buildInitialCategoryChannels(
         return buildList(limit.coerceAtMost(recents.size)) {
             recents.toList().asReversed().forEach { id ->
                 val (index, channel) = indexById[id] ?: return@forEach
-                if (!isAdultGroup(channel.group, channel.name)) {
+                if (!isAdultGroup(channel.group, channel.name) && !isHiddenPlaylistGroup(channel, hiddenGroups)) {
                     add(channel.enrichForFastStartup(100 + index))
                     if (size >= limit) return@buildList
                 }
@@ -793,7 +825,9 @@ fun buildInitialCategoryChannels(
     val matcher = rawCategoryMatcher(categoryId, favorites, recents)
     return buildList(limit.coerceAtMost(channels.size)) {
         channels.forEachIndexed { index, channel ->
-            if (matcher(channel)) {
+            val isSelectedHiddenGroup = categoryId.startsWith("grp:") &&
+                playlistGroupCategoryId(channel.id.substringBefore(':'), channel.group) == categoryId
+            if (matcher(channel) && (isSelectedHiddenGroup || !isHiddenPlaylistGroup(channel, hiddenGroups))) {
                 add(channel.enrich(100 + index))
                 if (size >= limit) return@buildList
             }
@@ -801,11 +835,15 @@ fun buildInitialCategoryChannels(
     }
 }
 
-fun buildCategoryIndex(channels: List<EnrichedChannel>): LiveCategoryIndex {
+fun buildCategoryIndex(
+    channels: List<EnrichedChannel>,
+    hiddenGroups: Set<String> = emptySet(),
+): LiveCategoryIndex {
     if (channels.isEmpty()) return LiveCategoryIndex.Empty
 
     val byId = LinkedHashMap<String, EnrichedChannel>(channels.size)
     val buckets = LinkedHashMap<String, MutableList<EnrichedChannel>>()
+    val hiddenIds = LinkedHashSet<String>()
 
     fun add(categoryId: String, channel: EnrichedChannel) {
         buckets.getOrPut(categoryId) { ArrayList() }.add(channel)
@@ -814,6 +852,10 @@ fun buildCategoryIndex(channels: List<EnrichedChannel>): LiveCategoryIndex {
     channels.forEach { channel ->
         byId[channel.id] = channel
         add(playlistGroupCategoryId(channel.source.id.substringBefore(':'), channel.source.group), channel)
+        if (isHiddenPlaylistGroup(channel, hiddenGroups)) {
+            hiddenIds += channel.id
+            return@forEach
+        }
         if (channel.isAdult) {
             add("adult", channel)
             return@forEach
@@ -856,6 +898,7 @@ fun buildCategoryIndex(channels: List<EnrichedChannel>): LiveCategoryIndex {
     return LiveCategoryIndex(
         byCategory = buckets.mapValues { (_, value) -> value.toList() },
         byId = byId,
+        hiddenIds = hiddenIds,
     )
 }
 
