@@ -239,6 +239,8 @@ class IptvRepository @Inject constructor(
     private val epgEmptyRetryMs = 30_000L
     private val epgUpcomingProgramLimit = 48
     private val epgRecentProgramLimit = 2
+    private val xmlTvPastWindowMs = 48L * 60L * 60_000L
+    private val xmlTvFutureWindowMs = 48L * 60L * 60_000L
     private val completeEpgCoverageTarget = 0.98f
     private val xtreamShortEpgLimit = 8
     private val startupShortEpgChannelLimit = 1200
@@ -4882,12 +4884,20 @@ class IptvRepository @Inject constructor(
                                     "&password=${creds.password}&action=get_short_epg&stream_id=$sid&limit=$xtreamShortEpgLimit"
                                 var listings: List<XtreamEpgListing>? = null
                                 try {
-                                    var resp: XtreamEpgResponse? = requestJson(url, XtreamEpgResponse::class.java)
+                                    var resp: XtreamEpgResponse? = requestJson(
+                                        url,
+                                        XtreamEpgResponse::class.java,
+                                        client = xtreamLookupHttpClient
+                                    )
                                     listings = resp?.epgListings
                                     if (listings.isNullOrEmpty()) {
                                         val fallbackUrl = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
                                             "&password=${creds.password}&action=get_short_epg&stream_id=$sid"
-                                        resp = requestJson(fallbackUrl, XtreamEpgResponse::class.java)
+                                        resp = requestJson(
+                                            fallbackUrl,
+                                            XtreamEpgResponse::class.java,
+                                            client = xtreamLookupHttpClient
+                                        )
                                         listings = resp?.epgListings
                                     }
                                     if (!listings.isNullOrEmpty()) {
@@ -4919,7 +4929,10 @@ class IptvRepository @Inject constructor(
             streamCount > 25_000 -> 1_200_000L
             streamCount > 10_000 -> 900_000L
             streamCount > 4_000 -> 420_000L
-            else -> 180_000L
+            streamCount > 1_200 -> 120_000L
+            streamCount > 256 -> 45_000L
+            streamCount > 64 -> 24_000L
+            else -> 12_000L
         }
 
     /**
@@ -5261,7 +5274,10 @@ class IptvRepository @Inject constructor(
         if (channels.isEmpty()) return emptyMap()
 
         val nowUtc = System.currentTimeMillis()
-        val recentCutoff = oldestRecentCutoff(channels, nowUtc)
+        val recentCutoff = xmlTvRecentCutoff(channels, nowUtc)
+        val futureCutoff = nowUtc + xmlTvFutureWindowMs
+        val recentCutoffByChannelId = buildRecentCutoffByChannelId(channels, nowUtc)
+        val recentLimitByChannelId = buildRecentLimitByChannelId(channels)
 
         val keyLookup = buildChannelKeyLookup(channels)
         val xmlChannelNameMap = mutableMapOf<String, MutableSet<String>>()
@@ -5300,13 +5316,14 @@ class IptvRepository @Inject constructor(
                         }
                         "programme" -> {
                             val rawKey = normalizeChannelKey(parser.getAttributeValue(null, "channel") ?: "")
+                            val start = parseXmlTvDate(parser.getAttributeValue(null, "start"))
                             val stop = parseXmlTvDate(parser.getAttributeValue(null, "stop"))
                             // Skip programmes that ended before the recent cutoff
-                            if (stop > 0L && stop <= recentCutoff) {
+                            if ((stop > 0L && stop <= recentCutoff) || (start > 0L && start >= futureCutoff)) {
                                 currentChannelKey = null
                             } else {
                                 currentChannelKey = rawKey
-                                currentStart = parseXmlTvDate(parser.getAttributeValue(null, "start"))
+                                currentStart = start
                                 currentStop = stop
                                 currentTitle = null
                                 currentDesc = null
@@ -5349,9 +5366,9 @@ class IptvRepository @Inject constructor(
                                 if (program.startUtcMillis > nowUtc) {
                                     val future = upcomingCandidates.getOrPut(channel.id) { mutableListOf() }
                                     addUpcomingCandidate(future, program, limit = epgUpcomingProgramLimit)
-                                } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffForChannel(channel, nowUtc)) {
+                                } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffByChannelId.getValue(channel.id)) {
                                     val recent = recentCandidates.getOrPut(channel.id) { mutableListOf() }
-                                    val limit = recentProgramLimitForChannel(channel)
+                                    val limit = recentLimitByChannelId.getValue(channel.id)
                                     addRecentCandidate(recent, program, limit)
                                 }
                             }
@@ -5374,7 +5391,10 @@ class IptvRepository @Inject constructor(
         if (channels.isEmpty()) return emptyMap()
 
         val nowUtc = System.currentTimeMillis()
-        val recentCutoff = oldestRecentCutoff(channels, nowUtc)
+        val recentCutoff = xmlTvRecentCutoff(channels, nowUtc)
+        val futureCutoff = nowUtc + xmlTvFutureWindowMs
+        val recentCutoffByChannelId = buildRecentCutoffByChannelId(channels, nowUtc)
+        val recentLimitByChannelId = buildRecentLimitByChannelId(channels)
 
         val keyLookup = buildChannelKeyLookup(channels)
         val xmlChannelNameMap = mutableMapOf<String, MutableSet<String>>()
@@ -5415,9 +5435,17 @@ class IptvRepository @Inject constructor(
                         textBuffer.setLength(0)
                     }
                     "programme" -> {
-                        currentChannelKey = normalizeChannelKey(attributes?.getValue("channel").orEmpty())
-                        currentStart = parseXmlTvDate(attributes?.getValue("start"))
-                        currentStop = parseXmlTvDate(attributes?.getValue("stop"))
+                        val start = parseXmlTvDate(attributes?.getValue("start"))
+                        val stop = parseXmlTvDate(attributes?.getValue("stop"))
+                        if ((stop > 0L && stop <= recentCutoff) || (start > 0L && start >= futureCutoff)) {
+                            currentChannelKey = null
+                            currentStart = 0L
+                            currentStop = 0L
+                        } else {
+                            currentChannelKey = normalizeChannelKey(attributes?.getValue("channel").orEmpty())
+                            currentStart = start
+                            currentStop = stop
+                        }
                         currentTitle = null
                         currentDesc = null
                     }
@@ -5495,10 +5523,10 @@ class IptvRepository @Inject constructor(
                             if (program.startUtcMillis > nowUtc) {
                                 val future = upcomingCandidates.getOrPut(channel.id) { mutableListOf() }
                                 addUpcomingCandidate(future, program, limit = epgUpcomingProgramLimit)
-                            } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffForChannel(channel, nowUtc)) {
+                            } else if (program.endUtcMillis <= nowUtc && program.endUtcMillis > recentCutoffByChannelId.getValue(channel.id)) {
                                 // Recently ended program – keep for the past-window in the EPG guide
                                 val recent = recentCandidates.getOrPut(channel.id) { mutableListOf() }
-                                val limit = recentProgramLimitForChannel(channel)
+                                val limit = recentLimitByChannelId.getValue(channel.id)
                                 addRecentCandidate(recent, program, limit)
                             }
                             }
@@ -5616,6 +5644,23 @@ class IptvRepository @Inject constructor(
         } else {
             nowUtcMillis - 30L * 60_000L
         }
+    }
+
+    private fun xmlTvRecentCutoff(channels: Collection<IptvChannel>, nowUtcMillis: Long): Long {
+        return maxOf(oldestRecentCutoff(channels, nowUtcMillis), nowUtcMillis - xmlTvPastWindowMs)
+    }
+
+    private fun buildRecentCutoffByChannelId(
+        channels: Collection<IptvChannel>,
+        nowUtcMillis: Long
+    ): Map<String, Long> {
+        return channels.associate { channel ->
+            channel.id to maxOf(recentCutoffForChannel(channel, nowUtcMillis), nowUtcMillis - xmlTvPastWindowMs)
+        }
+    }
+
+    private fun buildRecentLimitByChannelId(channels: Collection<IptvChannel>): Map<String, Int> {
+        return channels.associate { channel -> channel.id to recentProgramLimitForChannel(channel) }
     }
 
     private fun effectiveCatchupDays(channel: IptvChannel?): Int {

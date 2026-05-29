@@ -603,6 +603,13 @@ class TvViewModel @Inject constructor(
         val channels = state.snapshot.channels
         if (!state.isConfigured || channels.isEmpty()) return
         if (!hasNetworkEpgSource(state.config)) return
+        if (!force && isLargeIptvList(channels.size)) {
+            completeEpgBackfillJob?.cancel()
+            completeEpgBackfillJob = null
+            setEpgBackfillInProgress(false)
+            System.err.println("[EPG-Complete] Skipping automatic full guide sweep for large list (${channels.size} channels)")
+            return
+        }
         val hasGuideData = hasAnyEpgData(state.snapshot)
         if (!force && isLargeIptvList(channels.size) && hasGuideData) {
             completeEpgBackfillJob?.cancel()
@@ -724,6 +731,10 @@ class TvViewModel @Inject constructor(
     }
 
     private fun requestVisibleCompleteEpgBackfill() {
+        if (isLargeIptvList(_uiState.value.snapshot.channels.size)) {
+            System.err.println("[EPG-Complete] Visible guide is unresolved; not starting full sweep on large list")
+            return
+        }
         val now = System.currentTimeMillis()
         if (now - lastVisibleForcedCompleteEpgAt < 60_000L) return
         lastVisibleForcedCompleteEpgAt = now

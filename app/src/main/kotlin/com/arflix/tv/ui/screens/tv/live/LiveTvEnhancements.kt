@@ -291,14 +291,13 @@ fun EpgStatusStrip(
 ) {
     val visible = isLoading ||
         !warning.isNullOrBlank() ||
-        (!hasGuideSource && totalChannels > 0) ||
-        (hasGuideSource && totalChannels > 0 && matchedCount == 0)
+        (!hasGuideSource && totalChannels > 0)
     if (!visible) return
     val text = when {
         !warning.isNullOrBlank() -> warning
         isLoading -> "Loading visible guide..."
         !hasGuideSource -> "No EPG source configured"
-        else -> "Guide data is still matching visible channels"
+        else -> "Guide pending"
     }
     Box(
         modifier = modifier

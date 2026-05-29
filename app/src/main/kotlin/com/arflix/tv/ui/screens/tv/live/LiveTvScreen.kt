@@ -477,8 +477,8 @@ fun LiveTvScreen(
             } == true
         }
     }
-    val guideLoadingInScope = remember(state.epgBackfillInProgress, state.epgLoadingChannelIds, guideStatusIds) {
-        state.epgBackfillInProgress || state.epgLoadingChannelIds.any { it in guideStatusIds }
+    val guideLoadingInScope = remember(state.epgLoadingChannelIds, guideStatusIds) {
+        state.epgLoadingChannelIds.any { it in guideStatusIds }
     }
 
     // Pick the startup channel only after saved IPTV preferences/session have
@@ -1113,7 +1113,7 @@ fun LiveTvScreen(
                         nowNext = state.snapshot.nowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
-                        isGuideBackfillLoading = state.epgBackfillInProgress,
+                        isGuideBackfillLoading = false,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
@@ -1241,7 +1241,7 @@ fun LiveTvScreen(
                         nowNext = state.snapshot.nowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
                         epgAttemptedChannelIds = state.epgAttemptedChannelIds,
-                        isGuideBackfillLoading = state.epgBackfillInProgress,
+                        isGuideBackfillLoading = false,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
