@@ -285,7 +285,8 @@ class IptvRepository @Inject constructor(
         val nowNext: Map<String, IptvNowNext> = emptyMap(),
         val loadedAtEpochMs: Long = 0L,
         val configSignature: String = "",
-        val sourceSignature: String = ""
+        val sourceSignature: String = "",
+        val discoveredEpgUrls: List<String> = emptyList()
     )
 
     fun observeConfig(): Flow<IptvConfig> =
@@ -1137,6 +1138,9 @@ class IptvRepository @Inject constructor(
                 )
             }
 
+            if (allowNetworkEpgFetch) {
+                discoverEmbeddedEpgSourcesIfNeeded(activePlaylists)
+            }
             val epgCandidates = resolveEpgCandidates(config)
             var epgUpdated = false
             val cachedHasPrograms = hasAnyProgramData(cachedNowNext)
@@ -4312,6 +4316,53 @@ class IptvRepository @Inject constructor(
         return null
     }
 
+    private suspend fun discoverEmbeddedEpgSourcesIfNeeded(playlists: List<IptvPlaylistEntry>) {
+        if (discoveredM3uEpgUrls.isNotEmpty()) return
+        val candidates = playlists.filter { playlist ->
+            playlist.m3uUrl.isNotBlank() &&
+                playlist.allEpgUrls().isEmpty() &&
+                resolveXtreamCredentials(playlist) == null
+        }
+        if (candidates.isEmpty()) return
+
+        coroutineScope {
+            candidates.map { playlist ->
+                async(Dispatchers.IO) {
+                    discoverM3uHeaderEpgUrls(playlist.m3uUrl)
+                }
+            }.awaitAll()
+        }
+            .flatten()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .forEach { discoveredM3uEpgUrls.add(it) }
+    }
+
+    private fun discoverM3uHeaderEpgUrls(m3uUrl: String): List<String> {
+        val request = Request.Builder()
+            .url(m3uUrl)
+            .build()
+        return runCatching {
+            iptvCatalogHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use emptyList()
+                val body = response.body ?: return@use emptyList()
+                BufferedReader(InputStreamReader(body.byteStream(), StandardCharsets.UTF_8), 32 * 1024).use { reader ->
+                    repeat(32) {
+                        val line = reader.readLine() ?: return@use emptyList()
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("#EXTM3U", ignoreCase = true)) {
+                            return@use extractM3uDeclaredEpgUrls(trimmed)
+                        }
+                        if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                            return@use emptyList()
+                        }
+                    }
+                    emptyList()
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
     private suspend fun fetchXtreamLiveChannels(
         creds: XtreamCredentials,
         onProgress: (IptvLoadProgress) -> Unit
@@ -5017,10 +5068,7 @@ class IptvRepository @Inject constructor(
                 if (line.isEmpty()) continue
 
                 if (line.startsWith("#EXTM3U", ignoreCase = true)) {
-                    listOf("url-tvg", "x-tvg-url", "tvg-url")
-                        .mapNotNull { attr -> extractAttr(line, attr) }
-                        .flatMap { normalizeEpgInputs(it) }
-                        .filter { it.startsWith("http", ignoreCase = true) }
+                    extractM3uDeclaredEpgUrls(line)
                         .forEach { discoveredM3uEpgUrls.add(it) }
                     continue
                 }
@@ -5099,6 +5147,15 @@ class IptvRepository @Inject constructor(
 
         onProgress(IptvLoadProgress("Finalizing ${channels.size} channels...", 95))
         return channels
+    }
+
+    private fun extractM3uDeclaredEpgUrls(line: String): List<String> {
+        return listOf("url-tvg", "x-tvg-url", "tvg-url")
+            .mapNotNull { attr -> extractAttr(line, attr) }
+            .flatMap { normalizeEpgInputs(it) }
+            .map { it.trim() }
+            .filter { it.startsWith("http", ignoreCase = true) }
+            .distinct()
     }
 
     private fun parseXmlTvNowNext(
@@ -5910,7 +5967,13 @@ class IptvRepository @Inject constructor(
                 nowNext = compactNowNext,
                 loadedAtEpochMs = loadedAtMs,
                 configSignature = buildConfigSignature(config),
-                sourceSignature = buildSourceSignature(config)
+                sourceSignature = buildSourceSignature(config),
+                discoveredEpgUrls = discoveredM3uEpgUrls
+                    .asSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .toList()
             )
             val compressed = gzipBytes(gson.toJson(payload))
             if (compressed.size <= MAX_IPTV_CACHE_BYTES) {
@@ -5964,6 +6027,10 @@ class IptvRepository @Inject constructor(
                 cacheSourceSignature != currentSourceSignature
             ) return null
             if (payload.channels.isEmpty()) return null
+            payload.discoveredEpgUrls.orEmpty()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .forEach { discoveredM3uEpgUrls.add(it) }
             payload
         }.getOrNull()
     }

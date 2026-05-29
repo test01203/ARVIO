@@ -86,6 +86,7 @@ class TvViewModel @Inject constructor(
     private var lastFullEpgWarmupKey: String? = null
     private var completeEpgBackfillJob: Job? = null
     private var lastCompleteEpgBackfillKey: String? = null
+    private var lastVisibleForcedCompleteEpgAt: Long = 0L
     private var preparedContentJob: Job? = null
     private var preparedContentRevision: Long = 0L
     private val resolvedStalkerStreamCache = LinkedHashMap<String, String>()
@@ -452,6 +453,13 @@ class TvViewModel @Inject constructor(
         )
     }
 
+    private fun clearEpgLoading(channelIds: Collection<String>) {
+        val ids = channelIds.asSequence().filter { it.isNotBlank() }.toSet()
+        if (ids.isEmpty()) return
+        val current = _uiState.value
+        setUiState(current.copy(epgLoadingChannelIds = current.epgLoadingChannelIds - ids))
+    }
+
     private fun finishEpgAttempt(channelIds: Collection<String>) {
         val ids = channelIds.asSequence().filter { it.isNotBlank() }.toSet()
         if (ids.isEmpty()) return
@@ -622,7 +630,7 @@ class TvViewModel @Inject constructor(
 
         setEpgBackfillInProgress(true)
         completeEpgBackfillJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(2_000L)
+            delay(if (hasGuideData) 2_000L else 250L)
             val backfillResult = runCatching {
                 kotlinx.coroutines.withTimeoutOrNull(900_000L) {
                     iptvRepository.loadSnapshot(
@@ -649,6 +657,7 @@ class TvViewModel @Inject constructor(
             }
             val snapshot = backfillResult.getOrNull()
             if (snapshot == null) {
+                lastCompleteEpgBackfillKey = null
                 AppLogger.recordException(
                     throwable = IllegalStateException("Complete EPG backfill timed out"),
                     context = mapOf(
@@ -662,6 +671,7 @@ class TvViewModel @Inject constructor(
             }
 
             if (snapshot.channels.isEmpty() || snapshot.nowNext.isEmpty()) {
+                lastCompleteEpgBackfillKey = null
                 AppLogger.recordException(
                     throwable = IllegalStateException("Complete EPG backfill returned empty guide"),
                     context = mapOf(
@@ -709,6 +719,13 @@ class TvViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun requestVisibleCompleteEpgBackfill() {
+        val now = System.currentTimeMillis()
+        if (now - lastVisibleForcedCompleteEpgAt < 60_000L) return
+        lastVisibleForcedCompleteEpgAt = now
+        startCompleteEpgBackfill(force = true)
     }
 
     fun setQuery(query: String) {
@@ -840,7 +857,26 @@ class TvViewModel @Inject constructor(
                         )
                     )
                 }
-                finishEpgAttempt(batchSet)
+                val unresolvedIds = batchSet.filterNot { id ->
+                    hasProgramData(_uiState.value.snapshot.nowNext[id])
+                }
+                if (unresolvedIds.isNotEmpty()) {
+                    val current = _uiState.value
+                    val waitingForFullGuide = current.epgBackfillInProgress ||
+                        (
+                            current.hasPotentialGuideSource &&
+                                hasNetworkEpgSource(current.config) &&
+                                !hasAnyEpgData(current.snapshot)
+                            )
+                    if (waitingForFullGuide) {
+                        clearEpgLoading(unresolvedIds)
+                        if (!current.epgBackfillInProgress) {
+                            requestVisibleCompleteEpgBackfill()
+                        }
+                    } else {
+                        finishEpgAttempt(unresolvedIds)
+                    }
+                }
                 pass += 1
                 delay(60L)
             }
