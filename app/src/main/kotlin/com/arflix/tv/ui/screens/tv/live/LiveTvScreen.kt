@@ -110,6 +110,7 @@ private const val GuideInitialWindowRows = 120
 private const val GuidePageRows = 120
 private const val GuideMaxWindowRows = 420
 private const val CatchupSeekStepMs = 30_000L
+private const val CatchupUrlAnchorGranularityMs = 60_000L
 private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
@@ -238,6 +239,31 @@ private fun looksLikeMpegTsUrl(url: String): Boolean {
     return segments.size >= 4 &&
         segments.first().equals("live", ignoreCase = true) &&
         segments.last().substringBefore('.').toIntOrNull() != null
+}
+
+private fun IptvProgram.shiftedForCatchup(offsetMs: Long): IptvProgram {
+    val latestStartOffset = (endUtcMillis - startUtcMillis - 1_000L).coerceAtLeast(0L)
+    val safeOffset = offsetMs.coerceIn(0L, latestStartOffset)
+    if (safeOffset <= 0L) return this
+    return copy(startUtcMillis = (startUtcMillis + safeOffset).coerceAtMost(endUtcMillis - 1_000L))
+}
+
+private fun IptvChannel.catchupUrlAnchorOffset(offsetMs: Long): Long {
+    val safeOffset = offsetMs.coerceAtLeast(0L)
+    val type = catchupType?.trim()?.lowercase().orEmpty()
+    val usesMinuteStart = type in setOf("xtream", "xc", "xciptv", "timeshift") ||
+        xtreamStreamId != null ||
+        streamUrl.contains("/live/", ignoreCase = true)
+    return if (usesMinuteStart) {
+        safeOffset - (safeOffset % CatchupUrlAnchorGranularityMs)
+    } else {
+        safeOffset
+    }
+}
+
+private fun IptvChannel.catchupInSegmentSeekOffset(offsetMs: Long): Long {
+    val safeOffset = offsetMs.coerceAtLeast(0L)
+    return (safeOffset - catchupUrlAnchorOffset(safeOffset)).coerceAtLeast(0L)
 }
 
 @Composable
@@ -480,6 +506,7 @@ fun LiveTvScreen(
     var epgPrefetchAnchorId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
     var startupChannelApplied by rememberSaveable(selectedProviderId) { mutableStateOf(false) }
     var playingCatchupProgram by remember { mutableStateOf<IptvProgram?>(null) }
+    var catchupPlaybackOffsetMs by remember { mutableLongStateOf(0L) }
     val focusCommitScope = rememberCoroutineScope()
     val pendingFocusCommit = remember { arrayOf<Pair<String, String>?>(null) }
     val focusCommitJob = remember { arrayOf<Job?>(null) }
@@ -505,6 +532,12 @@ fun LiveTvScreen(
     val playingChannel = remember(playingChannelId, visibleEnrichedState.value, filteredChannels) {
         playingChannelId?.let { visibleEnrichedState.value.index.byId[it] }
             ?: filteredChannels.firstOrNull { it.id == playingChannelId }
+    }
+    val catchupUrlAnchorOffsetMs = remember(playingChannel?.source, catchupPlaybackOffsetMs) {
+        playingChannel?.source?.catchupUrlAnchorOffset(catchupPlaybackOffsetMs) ?: 0L
+    }
+    val catchupInSegmentSeekMs = remember(playingChannel?.source, catchupPlaybackOffsetMs) {
+        playingChannel?.source?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L
     }
     val currentNowNext = remember(playingChannel, playingCatchupProgram, state.snapshot.nowNext, guideByFallbackKey) {
         val live = guideForChannel(playingChannel)
@@ -797,6 +830,7 @@ fun LiveTvScreen(
         epgPrefetchAnchorId = all[nextIdx].id
         rememberedChannelByCategory[selectedCategoryId] = all[nextIdx].id
         playingCatchupProgram = null
+        catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
     }
 
@@ -858,12 +892,14 @@ fun LiveTvScreen(
         if (isSamePlayingChannel && !isFullScreen) {
             // Second tap on the already-playing channel → fullscreen
             playingCatchupProgram = null
+            catchupPlaybackOffsetMs = 0L
             isFullScreen = true
             hudPokeSignal++
         } else {
             // First tap or different channel → tune in mini-player
             playingChannelId = channel.id
             playingCatchupProgram = null
+            catchupPlaybackOffsetMs = 0L
             fullscreenGuideOpen = false
         }
     }
@@ -881,6 +917,7 @@ fun LiveTvScreen(
         epgPrefetchAnchorId = displayId
         rememberedChannelByCategory[selectedCategoryId] = displayId
         playingCatchupProgram = null
+        catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
         focusChannelList(displayId)
     }
@@ -891,11 +928,15 @@ fun LiveTvScreen(
         rememberedChannelByCategory[selectedCategoryId] = channel.id
         playingChannelId = channel.id
         playingCatchupProgram = program
+        catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
         focusChannelList(channel.id)
     }
 
     fun playProgramInFullscreen(program: IptvProgram?) {
+        if (program != playingCatchupProgram) {
+            catchupPlaybackOffsetMs = 0L
+        }
         playingCatchupProgram = program
         fullscreenGuideOpen = false
         isFullScreen = true
@@ -912,6 +953,7 @@ fun LiveTvScreen(
         focusedChannelId = channel.id
         epgPrefetchAnchorId = channel.id
         playingCatchupProgram = null
+        catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
         rememberedChannelByCategory[selectedCategoryId] = channel.id
         focusChannelList(channel.id)
@@ -996,7 +1038,8 @@ fun LiveTvScreen(
     var playerPositionMs by remember { mutableLongStateOf(0L) }
     var playerDurationMs by remember { mutableLongStateOf(0L) }
     var playerIsPlaying by remember { mutableStateOf(false) }
-    LaunchedEffect(exoPlayer, playingCatchupProgram) {
+    var playerPlayWhenReady by remember { mutableStateOf(true) }
+    LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs) {
         while (true) {
             val programDuration = playingCatchupProgram
                 ?.let { (it.endUtcMillis - it.startUtcMillis).coerceAtLeast(0L) }
@@ -1006,10 +1049,12 @@ fun LiveTvScreen(
                 ?: 0L
             val duration = maxOf(programDuration, exoDuration)
             playerDurationMs = duration
-            playerPositionMs = exoPlayer.currentPosition
+            val streamOffset = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else 0L
+            playerPositionMs = (streamOffset + exoPlayer.currentPosition)
                 .coerceAtLeast(0L)
                 .let { position -> if (duration > 0L) position.coerceAtMost(duration) else position }
             playerIsPlaying = exoPlayer.isPlaying
+            playerPlayWhenReady = exoPlayer.playWhenReady
             delay(if (playingCatchupProgram != null) 500L else 1_500L)
         }
     }
@@ -1037,6 +1082,7 @@ fun LiveTvScreen(
 
     var lastPreparedStreamUrl by remember { mutableStateOf<String?>(null) }
     var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var lastPreparedCatchupOffsetMs by remember { mutableLongStateOf(-1L) }
     var playerRetryCount by remember { mutableIntStateOf(0) }
     var playbackDiagnostic by remember { mutableStateOf<PlaybackDiagnostic?>(null) }
 
@@ -1044,71 +1090,102 @@ fun LiveTvScreen(
         stream: String,
         headers: Map<String, String>,
         resetRetry: Boolean,
+        initialPositionMs: Long = 0L,
     ) {
         val mergedHeaders = (baseRequestHeaders + headers).filterValues { it.isNotBlank() }
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
-        exoPlayer.setMediaItem(
-            MediaItem.Builder()
-                .setUri(stream)
-                .apply {
-                    if (looksLikeMpegTsUrl(stream)) {
-                        setMimeType(MimeTypes.VIDEO_MP2T)
-                    }
-                    if (playingCatchupProgram == null) {
-                        setLiveConfiguration(
-                            MediaItem.LiveConfiguration.Builder()
-                                .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
-                                .setTargetOffsetMs(4_000).build()
-                        )
-                    }
+        val mediaItem = MediaItem.Builder()
+            .setUri(stream)
+            .apply {
+                if (looksLikeMpegTsUrl(stream)) {
+                    setMimeType(MimeTypes.VIDEO_MP2T)
                 }
-                .build()
-        )
+                if (playingCatchupProgram == null) {
+                    setLiveConfiguration(
+                        MediaItem.LiveConfiguration.Builder()
+                            .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
+                            .setTargetOffsetMs(4_000).build()
+                    )
+                }
+            }
+            .build()
+        if (initialPositionMs > 0L) {
+            exoPlayer.setMediaItem(mediaItem, initialPositionMs)
+        } else {
+            exoPlayer.setMediaItem(mediaItem)
+        }
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
         exoPlayer.play()
         lastPreparedStreamUrl = stream
         lastPreparedHeaders = headers
+        lastPreparedCatchupOffsetMs = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L
         if (resetRetry) playerRetryCount = 0
         if (resetRetry) {
             playbackDiagnostic = PlaybackDiagnostic(
-                title = "Starting live stream",
+                title = if (playingCatchupProgram != null && initialPositionMs > 0L) "Seeking catch-up" else "Starting live stream",
                 detail = playingChannel?.name ?: "Preparing source",
                 severity = PlaybackDiagnosticSeverity.Info,
             )
         }
+        System.err.println(
+            "[IPTV-Catchup] prepare catchup=${playingCatchupProgram != null} " +
+                "anchor=$catchupUrlAnchorOffsetMs inSegment=$initialPositionMs " +
+                "target=$catchupPlaybackOffsetMs url=${redactPlaybackUrl(stream)}"
+        )
     }
 
     fun toggleCatchupPlayback() {
         if (playingCatchupProgram == null) return
         if (exoPlayer.isPlaying) {
             exoPlayer.pause()
+            playerPlayWhenReady = false
             System.err.println("[IPTV-Catchup] pause position=${exoPlayer.currentPosition}")
         } else {
+            exoPlayer.playWhenReady = true
             exoPlayer.play()
+            playerPlayWhenReady = true
             System.err.println("[IPTV-Catchup] play position=${exoPlayer.currentPosition}")
         }
         hudPokeSignal++
     }
 
     fun seekCatchupBy(deltaMs: Long) {
-        if (playingCatchupProgram == null) return
-        val duration = playerDurationMs
+        val program = playingCatchupProgram ?: return
+        val duration = (program.endUtcMillis - program.startUtcMillis).coerceAtLeast(0L)
+            .takeIf { it > 0L }
+            ?: playerDurationMs
         val wasPlayRequested = exoPlayer.playWhenReady
         val maxPosition = if (duration > 1_000L) duration - 1_000L else duration
-        val target = (exoPlayer.currentPosition + deltaMs)
+        val current = (catchupUrlAnchorOffsetMs + exoPlayer.currentPosition.coerceAtLeast(0L))
+            .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
+        val target = (current + deltaMs)
             .coerceAtLeast(0L)
             .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
-        exoPlayer.seekTo(target)
-        exoPlayer.playWhenReady = wasPlayRequested
-        if (wasPlayRequested) {
-            exoPlayer.play()
-        } else {
-            exoPlayer.pause()
+        if (target == catchupPlaybackOffsetMs) {
+            hudPokeSignal++
+            return
         }
-        System.err.println("[IPTV-Catchup] seek delta=$deltaMs target=$target duration=$duration")
+        val source = playingChannel?.source
+        val targetAnchor = source?.catchupUrlAnchorOffset(target) ?: 0L
+        val targetInSegment = source?.catchupInSegmentSeekOffset(target) ?: target
+        val sameAnchor = targetAnchor == catchupUrlAnchorOffsetMs
+        catchupPlaybackOffsetMs = target
+        playerPositionMs = target
+        exoPlayer.playWhenReady = true
+        if (sameAnchor) {
+            exoPlayer.seekTo(targetInSegment)
+        }
+        exoPlayer.play()
+        playerPlayWhenReady = true
+        System.err.println(
+            "[IPTV-Catchup] seek delta=$deltaMs current=$current target=$target duration=$duration " +
+                "wasPlayRequested=$wasPlayRequested state=${exoPlayer.playbackState} " +
+                "anchor=$catchupUrlAnchorOffsetMs targetAnchor=$targetAnchor " +
+                "inSegment=$targetInSegment sameAnchor=$sameAnchor exo=${exoPlayer.currentPosition}"
+        )
         hudPokeSignal++
     }
 
@@ -1116,17 +1193,18 @@ fun LiveTvScreen(
         if (playingCatchupProgram == null) return
         System.err.println("[IPTV-Catchup] return-live channel=${playingChannelId.orEmpty()}")
         playingCatchupProgram = null
+        catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
         exoPlayer.play()
         hudPokeSignal++
     }
 
     // When the selected channel changes, swap media item.
-    val currentStreamUrl = remember(playingChannel, playingCatchupProgram) {
+    val currentStreamUrl = remember(playingChannel, playingCatchupProgram, catchupUrlAnchorOffsetMs) {
         val ch = playingChannel ?: return@remember initialStreamUrl
         val pr = playingCatchupProgram
         if (pr != null) {
-            viewModel.iptvRepository.getCatchupUrl(ch.source, pr)
+            viewModel.iptvRepository.getCatchupUrl(ch.source, pr.shiftedForCatchup(catchupUrlAnchorOffsetMs))
         } else {
             ch.streamUrl
         }
@@ -1139,12 +1217,13 @@ fun LiveTvScreen(
             }
         }
     }
-    LaunchedEffect(currentStreamUrl, playingCatchupProgram, playingChannel?.id) {
+    LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id) {
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
         val sourceChannel = playingChannel?.source
+        val streamProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
         val stream = runCatching {
             if (sourceChannel != null) {
-                viewModel.resolvePlayableStreamUrl(sourceChannel, playingCatchupProgram, catchupAttempt = 0)
+                viewModel.resolvePlayableStreamUrl(sourceChannel, streamProgram, catchupAttempt = 0)
             } else {
                 rawStream
             }
@@ -1162,8 +1241,19 @@ fun LiveTvScreen(
         }
         val headers = sourceChannel?.requestHeaders.orEmpty()
         delay(90L)
-        if (stream == lastPreparedStreamUrl && headers == lastPreparedHeaders) return@LaunchedEffect
-        prepareStream(stream, headers, resetRetry = true)
+        if (
+            stream == lastPreparedStreamUrl &&
+            headers == lastPreparedHeaders &&
+            catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs
+        ) {
+            return@LaunchedEffect
+        }
+        prepareStream(
+            stream = stream,
+            headers = headers,
+            resetRetry = true,
+            initialPositionMs = if (playingCatchupProgram != null) catchupInSegmentSeekMs else 0L,
+        )
         // Persist "recent" as soon as playback starts.
         playingChannelId?.let { id ->
             val set = LinkedHashSet(recents.value)
@@ -1184,7 +1274,8 @@ fun LiveTvScreen(
         lastPreparedStreamUrl,
         lastPreparedHeaders,
         playingChannel?.id,
-        playingCatchupProgram
+        playingCatchupProgram,
+        catchupPlaybackOffsetMs
     ) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1199,8 +1290,12 @@ fun LiveTvScreen(
                 playerRetryCount = nextAttempt
                 val retryChannel = playingChannel?.source
                 val retryProgram = playingCatchupProgram
+                val retryStreamProgram = retryProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
                 val catchupCandidateCount = if (retryChannel != null && retryProgram != null) {
-                    viewModel.iptvRepository.getCatchupUrlCandidates(retryChannel, retryProgram).size
+                    viewModel.iptvRepository.getCatchupUrlCandidates(
+                        retryChannel,
+                        retryStreamProgram ?: retryProgram
+                    ).size
                 } else {
                     0
                 }
@@ -1230,7 +1325,7 @@ fun LiveTvScreen(
                         if (retryChannel != null) {
                             viewModel.resolvePlayableStreamUrl(
                                 channel = retryChannel,
-                                program = retryProgram,
+                                program = retryStreamProgram ?: retryProgram,
                                 forceRefresh = true,
                                 catchupAttempt = if (retryProgram != null) nextAttempt else 0
                             )
@@ -1259,7 +1354,12 @@ fun LiveTvScreen(
                         detail = "Attempt $nextAttempt/$maxRetryCount after ${classifyPlaybackError(error)}",
                         severity = PlaybackDiagnosticSeverity.Warning,
                     )
-                    prepareStream(retryStream, retryHeaders, resetRetry = false)
+                    prepareStream(
+                        stream = retryStream,
+                        headers = retryHeaders,
+                        resetRetry = false,
+                        initialPositionMs = if (retryProgram != null) catchupInSegmentSeekMs else 0L,
+                    )
                 }
             }
 
@@ -1754,7 +1854,7 @@ fun LiveTvScreen(
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
                         isCatchupMode = playingCatchupProgram != null,
-                        isPlaying = playerIsPlaying,
+                        isPlaying = if (playingCatchupProgram != null) playerPlayWhenReady else playerIsPlaying,
                         playbackPositionMs = playerPositionMs,
                         playbackDurationMs = playerDurationMs,
                         onBackClick = if (isTouchDevice) {
@@ -1770,7 +1870,6 @@ fun LiveTvScreen(
                         },
                         onGuideClick = { openFullscreenGuide() },
                         onPlayPauseClick = { toggleCatchupPlayback() },
-                        onSeekBy = { delta -> seekCatchupBy(delta) },
                         onGoLiveClick = { returnCatchupToLive() },
                         modifier = Modifier,
                     )

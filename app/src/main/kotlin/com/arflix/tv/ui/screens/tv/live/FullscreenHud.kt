@@ -44,8 +44,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -68,7 +66,6 @@ fun FullscreenHud(
     onBackClick: (() -> Unit)? = null,
     onGuideClick: (() -> Unit)? = null,
     onPlayPauseClick: (() -> Unit)? = null,
-    onSeekBy: ((Long) -> Unit)? = null,
     onGoLiveClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -251,22 +248,10 @@ fun FullscreenHud(
                             horizontalArrangement = Arrangement.Center,
                         ) {
                             HudIconButton(
-                                icon = Icons.Filled.FastRewind,
-                                contentDescription = "Rewind 30 seconds",
-                                onClick = { onSeekBy?.invoke(-30_000L) },
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            HudIconButton(
                                 icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                                 contentDescription = if (isPlaying) "Pause" else "Play",
                                 emphasis = true,
                                 onClick = { onPlayPauseClick?.invoke() },
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            HudIconButton(
-                                icon = Icons.Filled.FastForward,
-                                contentDescription = "Forward 30 seconds",
-                                onClick = { onSeekBy?.invoke(30_000L) },
                             )
                             Spacer(Modifier.width(14.dp))
                             HudActionButton("LIVE", onClick = { onGoLiveClick?.invoke() })

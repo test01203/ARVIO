@@ -303,6 +303,17 @@ class IptvRepository @Inject constructor(
             .callTimeout(6, TimeUnit.SECONDS)
             .build()
     }
+    private val xtreamCatchupGuideHttpClient: OkHttpClient by lazy {
+        // Full catchup history (`get_simple_data_table`) is much larger than
+        // short now/next EPG. Keep short EPG snappy, but give catchup history
+        // enough time on slower TV boxes and large providers.
+        okHttpClient.newBuilder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .build()
+    }
     private val iptvCatalogHttpClient: OkHttpClient by lazy {
         // Live catalog payloads can be very large (50k+ streams), so keep them
         // below XMLTV timeouts but long enough to finish on TV WiFi.
@@ -773,7 +784,8 @@ class IptvRepository @Inject constructor(
         val startUnix = program.startUtcMillis / 1000L
         val endUnix = program.endUtcMillis / 1000L
         val nowUnix = System.currentTimeMillis() / 1000L
-        val durationMin = ((program.endUtcMillis - program.startUtcMillis) / 60_000L).coerceAtLeast(1L)
+        val durationMs = (program.endUtcMillis - program.startUtcMillis).coerceAtLeast(1L)
+        val durationMin = ((durationMs + 59_999L) / 60_000L).coerceAtLeast(1L)
         val creds = resolveXtreamCredentials(channel.streamUrl)
         val streamId = channel.xtreamStreamId ?: resolveXtreamStreamId(channel)
         val xtreamCandidates = if (creds != null && streamId != null) {
@@ -855,16 +867,30 @@ class IptvRepository @Inject constructor(
         val secondPattern = DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm-ss")
         val spaceSecondPattern = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
         val spaceMinutePattern = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-        val starts = listOf(
-            formatUtcDateTime(serverStartMs, minutePattern),
-            formatUtcDateTime(program.startUtcMillis, minutePattern),
-            formatUtcDateTime(serverStartMs, secondPattern),
-            formatUtcDateTime(program.startUtcMillis, secondPattern),
-            formatUtcDateTime(serverStartMs, spaceSecondPattern),
-            formatUtcDateTime(program.startUtcMillis, spaceSecondPattern),
-            formatUtcDateTime(serverStartMs, spaceMinutePattern),
-            formatUtcDateTime(program.startUtcMillis, spaceMinutePattern)
-        ).distinct()
+        val hasSecondOffset = serverStartMs % 60_000L != 0L || program.startUtcMillis % 60_000L != 0L
+        val starts = if (hasSecondOffset) {
+            listOf(
+                formatUtcDateTime(serverStartMs, secondPattern),
+                formatUtcDateTime(program.startUtcMillis, secondPattern),
+                formatUtcDateTime(serverStartMs, spaceSecondPattern),
+                formatUtcDateTime(program.startUtcMillis, spaceSecondPattern),
+                formatUtcDateTime(serverStartMs, minutePattern),
+                formatUtcDateTime(program.startUtcMillis, minutePattern),
+                formatUtcDateTime(serverStartMs, spaceMinutePattern),
+                formatUtcDateTime(program.startUtcMillis, spaceMinutePattern)
+            )
+        } else {
+            listOf(
+                formatUtcDateTime(serverStartMs, minutePattern),
+                formatUtcDateTime(program.startUtcMillis, minutePattern),
+                formatUtcDateTime(serverStartMs, secondPattern),
+                formatUtcDateTime(program.startUtcMillis, secondPattern),
+                formatUtcDateTime(serverStartMs, spaceSecondPattern),
+                formatUtcDateTime(program.startUtcMillis, spaceSecondPattern),
+                formatUtcDateTime(serverStartMs, spaceMinutePattern),
+                formatUtcDateTime(program.startUtcMillis, spaceMinutePattern)
+            )
+        }.distinct()
 
         return buildList {
             starts.forEach { startStr ->
@@ -5421,8 +5447,11 @@ class IptvRepository @Inject constructor(
                                         val simpleResp: JsonObject? = requestJson(
                                             url = simpleUrl,
                                             type = JsonObject::class.java,
-                                            client = xtreamGuideHttpClient
+                                            client = xtreamCatchupGuideHttpClient
                                         )
+                                        if (simpleResp == null) {
+                                            hadError = true
+                                        }
                                         listings = trimXtreamListingsToGuideWindow(parseXtreamListingsFromJson(simpleResp))
                                         if (!listings.isNullOrEmpty()) {
                                             simpleFallbacks.incrementAndGet()
@@ -5479,8 +5508,11 @@ class IptvRepository @Inject constructor(
                                 val resp: JsonObject? = requestJson(
                                     url = url,
                                     type = JsonObject::class.java,
-                                    client = xtreamGuideHttpClient
+                                    client = xtreamCatchupGuideHttpClient
                                 )
+                                if (resp == null) {
+                                    hadError = true
+                                }
                                 val listings = trimXtreamListingsToGuideWindow(parseXtreamListingsFromJson(resp))
                                 if (listings.isNotEmpty()) {
                                     listingsResult.addAll(listings)
@@ -5517,9 +5549,9 @@ class IptvRepository @Inject constructor(
 
     private fun xtreamFullCatchupEpgTimeout(streamCount: Int): Long =
         when {
-            streamCount > 2 -> 24_000L
-            streamCount > 1 -> 16_000L
-            else -> 10_000L
+            streamCount > 2 -> 60_000L
+            streamCount > 1 -> 50_000L
+            else -> 45_000L
         }
 
     /**
