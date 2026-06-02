@@ -5537,21 +5537,19 @@ class IptvRepository @Inject constructor(
 
     private fun xtreamShortEpgTimeout(streamCount: Int): Long =
         when {
-            streamCount > 25_000 -> 1_200_000L
-            streamCount > 10_000 -> 900_000L
-            streamCount > 4_000 -> 420_000L
-            streamCount > 1_200 -> 120_000L
-            streamCount > 256 -> 45_000L
-            streamCount > 64 -> 18_000L
-            streamCount > 16 -> 12_000L
-            else -> 6_000L
+            streamCount > 4_000 -> 90_000L
+            streamCount > 1_200 -> 45_000L
+            streamCount > 256 -> 18_000L
+            streamCount > 64 -> 8_000L
+            streamCount > 16 -> 5_000L
+            else -> 2_500L
         }
 
     private fun xtreamFullCatchupEpgTimeout(streamCount: Int): Long =
         when {
-            streamCount > 2 -> 60_000L
-            streamCount > 1 -> 50_000L
-            else -> 45_000L
+            streamCount > 2 -> 30_000L
+            streamCount > 1 -> 24_000L
+            else -> 18_000L
         }
 
     /**

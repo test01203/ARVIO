@@ -634,6 +634,15 @@ class TvViewModel @Inject constructor(
         val largeList = isLargeIptvList(channels.size)
         if (!state.isConfigured || channels.isEmpty()) return
         if (!hasNetworkEpgSource(state.config)) return
+        if (largeList && !force) {
+            // Never start a broad 50k-channel EPG refresh from the TV page.
+            // Large providers must paint from cache plus scoped visible-channel
+            // refreshes; full XMLTV downloads can take minutes and contend with
+            // live playback/network bandwidth.
+            setEpgBackfillInProgress(false)
+            System.err.println("[EPG-Complete] Large list uses visible scoped refresh only")
+            return
+        }
         val indexedGuideChannels = if (largeList) {
             runCatching { iptvRepository.indexedGuideChannelCount() }.getOrDefault(0)
         } else {
@@ -891,7 +900,7 @@ class TvViewModel @Inject constructor(
         backgroundLimit: Int = 640
     ) {
         if (channelIds.isEmpty()) return
-        val firstPaintLimit = 40
+        val firstPaintLimit = 12
         val selectedId = selectedChannelId
             ?.takeIf { it in channelIds }
             ?: channelIds.firstOrNull()
@@ -928,7 +937,9 @@ class TvViewModel @Inject constructor(
 
         lastVisibleEpgRefreshKey = refreshKey
         lastVisibleEpgRefreshAt = now
-        val requestLimit = maxOf(firstPaintLimit, eagerLimit, backgroundLimit).coerceAtMost(orderedIds.size)
+        val requestLimit = maxOf(firstPaintLimit, eagerLimit, backgroundLimit)
+            .coerceAtMost(orderedIds.size)
+            .coerceAtMost(if (isLargeIptvList(_uiState.value.snapshot.channels.size)) 96 else 240)
         val missingIds = orderedIds
             .filterNot { id ->
                 hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id])
@@ -966,7 +977,7 @@ class TvViewModel @Inject constructor(
                     iptvRepository.refreshEpgForChannels(
                         channelIds = setOf(id),
                         maxChannels = 1,
-                        preferFullCatchupHistory = true
+                        preferFullCatchupHistory = false
                     )
                 }.getOrNull()
             }
@@ -1045,9 +1056,9 @@ class TvViewModel @Inject constructor(
             while (true) {
                 val drain = drainVisibleEpgBatch(
                     maxChannels = when (pass) {
-                        0 -> 48
-                        1 -> 96
-                        else -> 160
+                        0 -> 12
+                        1 -> 24
+                        else -> 48
                     }
                 )
                 val batch = drain.ids
@@ -1067,7 +1078,7 @@ class TvViewModel @Inject constructor(
                                 iptvRepository.refreshEpgForChannels(
                                     setOf(selectedMissingId),
                                     maxChannels = 1,
-                                    preferFullCatchupHistory = true
+                                    preferFullCatchupHistory = false
                                 )
                             }.getOrNull()
                         }

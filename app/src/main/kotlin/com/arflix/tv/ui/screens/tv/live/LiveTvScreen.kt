@@ -661,8 +661,8 @@ fun LiveTvScreen(
             viewModel.prefetchVisibleCategoryEpg(
                 channelIds = epgPrefetchIds,
                 selectedChannelId = selectedId,
-                eagerLimit = if (selectedCategoryId == "all") 32 else 64,
-                backgroundLimit = if (selectedCategoryId == "all") 120 else 240,
+                eagerLimit = if (selectedCategoryId == "all") 12 else 24,
+                backgroundLimit = if (selectedCategoryId == "all") 48 else 96,
             )
         }
     }
@@ -1019,10 +1019,15 @@ fun LiveTvScreen(
     }
     val exoPlayer = remember {
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(4_000, 20_000, 750, 1_500)
-            .setTargetBufferBytes(24 * 1024 * 1024)
+            .setBufferDurationsMs(
+                20_000,
+                120_000,
+                1_000,
+                3_000
+            )
+            .setTargetBufferBytes(80 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(true)
-            .setBackBuffer(2_000, false)
+            .setBackBuffer(10_000, true)
             .build()
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -1106,7 +1111,7 @@ fun LiveTvScreen(
                     setLiveConfiguration(
                         MediaItem.LiveConfiguration.Builder()
                             .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
-                            .setTargetOffsetMs(4_000).build()
+                            .setTargetOffsetMs(8_000).build()
                     )
                 }
             }
