@@ -447,6 +447,12 @@ fun LiveTvScreen(
     var topBarFocusIndex by rememberSaveable {
         mutableIntStateOf(topBarSelectedIndex(SidebarItem.TV, hasProfile).coerceIn(0, maxTopBarIndex))
     }
+    var lastGuideUserNavigationAt by remember { mutableLongStateOf(0L) }
+    fun noteGuideUserNavigation() {
+        lastGuideUserNavigationAt = System.currentTimeMillis()
+    }
+    fun isGuideUserNavigating(): Boolean =
+        System.currentTimeMillis() - lastGuideUserNavigationAt < 2_500L
 
     // Category switches are served from prebuilt buckets. Favorites and
     // recents remain ordered dynamic lists, but they are simple id lookups.
@@ -570,12 +576,38 @@ fun LiveTvScreen(
     fun requestGuideWindowAfter() {
         setGuideWindow(expandGuideWindowAfter(guideWindowStart, guideWindowEnd, filteredChannels.size))
     }
-    LaunchedEffect(selectedProviderId, selectedCategoryId, filteredChannels) {
-        val anchorId = playingChannelId ?: focusedChannelId ?: initialChannelId
-        val anchorIndex = anchorId?.let(filteredChannelIndexById::get) ?: 0
-        setGuideWindow(guideWindowAround(anchorIndex, filteredChannels.size))
+    val filteredChannelsWindowKey = remember(filteredChannels) {
+        listOf(
+            filteredChannels.size.toString(),
+            filteredChannels.firstOrNull()?.id.orEmpty(),
+            filteredChannels.lastOrNull()?.id.orEmpty(),
+        ).joinToString("|")
     }
-    LaunchedEffect(playingChannelId, filteredChannels, selectedCategoryId, selectedProviderId) {
+    var guideScopeKey by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(selectedProviderId, selectedCategoryId, filteredChannelsWindowKey) {
+        if (filteredChannels.isEmpty()) return@LaunchedEffect
+        val nextScopeKey = "$selectedProviderId|$selectedCategoryId"
+        if (guideScopeKey != nextScopeKey) {
+            val anchorId = rememberedChannelByCategory[selectedCategoryId]
+                ?: focusedChannelId
+                ?: playingChannelId
+                ?: initialChannelId
+            val anchorIndex = anchorId?.let(filteredChannelIndexById::get) ?: 0
+            setGuideWindow(guideWindowAround(anchorIndex, filteredChannels.size))
+            guideScopeKey = nextScopeKey
+        } else if (guideWindowStart >= filteredChannels.size) {
+            setGuideWindow(guideWindowAround(filteredChannels.lastIndex, filteredChannels.size))
+        } else if (!isGuideUserNavigating() && guideWindowEnd <= guideWindowStart) {
+            val anchorIndex = focusedChannelId?.let(filteredChannelIndexById::get)
+                ?: playingChannelId?.let(filteredChannelIndexById::get)
+                ?: 0
+            setGuideWindow(guideWindowAround(anchorIndex, filteredChannels.size))
+        }
+    }
+    LaunchedEffect(playingChannelId, selectedCategoryId, selectedProviderId) {
+        if (isGuideUserNavigating() && (focusZone == LiveTvFocusZone.CHANNEL_LIST || focusZone == LiveTvFocusZone.EPG)) {
+            return@LaunchedEffect
+        }
         val index = playingChannelId?.let(filteredChannelIndexById::get) ?: return@LaunchedEffect
         if (index !in guideWindowStart until guideWindowEnd) {
             setGuideWindow(guideWindowAround(index, filteredChannels.size))
@@ -707,7 +739,7 @@ fun LiveTvScreen(
     // Pick the startup channel only after saved IPTV preferences/session have
     // loaded. Favorites win over a stale recent channel, then we fall back to
     // the persisted recent channel, then the first filtered entry.
-    LaunchedEffect(filteredChannels, filteredChannelIndexById, playingChannelId, initialChannelId, state.tvSession, state.snapshot.favoriteChannels, visibleEnrichedState.value.all.size, state.iptvPreferencesLoaded, state.tvSessionLoaded, selectedProviderId, startupChannelApplied) {
+    LaunchedEffect(filteredChannelsWindowKey, playingChannelId, initialChannelId, state.tvSession, state.snapshot.favoriteChannels, visibleEnrichedState.value.all.size, state.iptvPreferencesLoaded, state.tvSessionLoaded, selectedProviderId, startupChannelApplied) {
         val startupStateReady = state.iptvPreferencesLoaded && state.tvSessionLoaded
         val playingVisible = playingChannelId?.let { id -> id in visibleEnrichedState.value.index.byId } == true
         if (!startupChannelApplied && filteredChannels.isNotEmpty() && (initialChannelId != null || startupStateReady)) {
@@ -732,7 +764,7 @@ fun LiveTvScreen(
                 startupChannelApplied = true
                 System.err.println("[EPG-Startup] channel=$startupChannelId focus=$displayId")
             }
-        } else if ((!playingVisible || playingChannelId == null) && filteredChannels.isNotEmpty() && startupStateReady) {
+        } else if ((!playingVisible || playingChannelId == null) && filteredChannels.isNotEmpty() && startupStateReady && !isGuideUserNavigating()) {
             val fallbackChannelId = chooseStartupChannelId(
                 filteredChannels = filteredChannels,
                 filteredChannelIds = filteredChannelIndexById.keys,
@@ -749,7 +781,7 @@ fun LiveTvScreen(
                 epgPrefetchAnchorId = focusedChannelId
             }
         }
-        if (focusedChannelId == null || focusedChannelId !in filteredChannelIndexById) {
+        if ((focusedChannelId == null || focusedChannelId !in filteredChannelIndexById) && !isGuideUserNavigating()) {
             focusedChannelId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
                 ?.takeIf { id -> id in filteredChannelIndexById }
                 ?: filteredChannels.firstOrNull()?.id
@@ -818,6 +850,7 @@ fun LiveTvScreen(
     // Prev/next zapping across the full enriched list (not the filtered
     // category) per user spec. Wraps around.
     fun zap(delta: Int) {
+        noteGuideUserNavigation()
         val all = allDisplayChannels
         if (all.isEmpty()) return
         val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
@@ -835,12 +868,14 @@ fun LiveTvScreen(
     }
 
     fun focusPlaylistSearch() {
+        noteGuideUserNavigation()
         focusZone = LiveTvFocusZone.CATEGORY_LIST
         focusSearchCategorySignal += 1
         runCatching { sidebarFocus.requestFocus() }
     }
 
     fun focusProviderSwitcher() {
+        noteGuideUserNavigation()
         if (providerFilters.size <= 1) {
             focusPlaylistSearch()
             return
@@ -850,6 +885,7 @@ fun LiveTvScreen(
     }
 
     fun focusChannelList(channelId: String? = focusedChannelId ?: playingChannelId) {
+        noteGuideUserNavigation()
         channelId?.let {
             focusedChannelId = it
             epgPrefetchAnchorId = it
@@ -865,6 +901,7 @@ fun LiveTvScreen(
     }
 
     fun focusEpg(channelId: String) {
+        noteGuideUserNavigation()
         focusedChannelId = channelId
         epgPrefetchAnchorId = channelId
         rememberedChannelByCategory[selectedCategoryId] = channelId
@@ -884,6 +921,7 @@ fun LiveTvScreen(
     }
 
     fun selectChannel(channel: EnrichedChannel) {
+        noteGuideUserNavigation()
         focusedChannelId = channel.id
         epgPrefetchAnchorId = channel.id
         rememberedChannelByCategory[selectedCategoryId] = channel.id
@@ -905,12 +943,14 @@ fun LiveTvScreen(
     }
 
     fun openVariantPicker(channel: EnrichedChannel) {
+        noteGuideUserNavigation()
         if (variantCountFor(channel, variantGroups) > 1) {
             variantPickerChannel = channel
         }
     }
 
     fun playVariant(channel: EnrichedChannel) {
+        noteGuideUserNavigation()
         val displayId = displayChannelIdFor(channel.id, visibleEnrichedState.value.index.byId, variantGroups) ?: channel.id
         playingChannelId = channel.id
         focusedChannelId = displayId
@@ -923,6 +963,7 @@ fun LiveTvScreen(
     }
 
     fun playProgramInMini(channel: EnrichedChannel, program: IptvProgram?) {
+        noteGuideUserNavigation()
         focusedChannelId = channel.id
         epgPrefetchAnchorId = channel.id
         rememberedChannelByCategory[selectedCategoryId] = channel.id
@@ -949,6 +990,7 @@ fun LiveTvScreen(
     var lastChannelDigitAt by remember { mutableStateOf(0L) }
 
     fun tuneChannelNumber(channel: EnrichedChannel) {
+        noteGuideUserNavigation()
         playingChannelId = channel.id
         focusedChannelId = channel.id
         epgPrefetchAnchorId = channel.id
@@ -1422,6 +1464,7 @@ fun LiveTvScreen(
                         if (searchOpen || isFullScreen || event.type != KeyEventType.KeyDown) {
                             return@onPreviewKeyEvent false
                         }
+                        noteGuideUserNavigation()
                         when (focusZone) {
                             LiveTvFocusZone.TOPBAR -> {
                                 when (event.key) {
@@ -1502,6 +1545,7 @@ fun LiveTvScreen(
                         providers = providerFilters,
                         selectedId = selectedProviderId,
                         onSelect = { id ->
+                            noteGuideUserNavigation()
                             selectedProviderId = id
                             selectedCategoryId = "all"
                             focusedChannelId = null
@@ -1534,7 +1578,10 @@ fun LiveTvScreen(
                     TouchCategoryRail(
                         tree = visibleEnrichedState.value.tree,
                         selectedId = selectedCategoryId,
-                        onSelect = { id -> selectedCategoryId = id },
+                        onSelect = { id ->
+                            noteGuideUserNavigation()
+                            selectedCategoryId = id
+                        },
                         onOpenSearch = { searchOpen = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -1583,13 +1630,18 @@ fun LiveTvScreen(
                     tree = visibleEnrichedState.value.tree,
                     selectedId = selectedCategoryId,
                     expanded = sidebarExpanded,
-                    onSelect = { id -> selectedCategoryId = id },
+                    onSelect = { id ->
+                        noteGuideUserNavigation()
+                        selectedCategoryId = id
+                    },
                     onOpenSearch = { searchOpen = true },
                     onHideCategory = { playlistId, groupName ->
+                        noteGuideUserNavigation()
                         selectedCategoryId = "all"
                         viewModel.toggleHiddenGroup(playlistId, groupName)
                     },
                     onUnhideCategory = { playlistId, groupName ->
+                        noteGuideUserNavigation()
                         viewModel.toggleHiddenGroup(playlistId, groupName)
                     },
                     onMoveCategoryUp = { groupName ->
@@ -1636,6 +1688,7 @@ fun LiveTvScreen(
                         providers = providerFilters,
                         selectedId = selectedProviderId,
                         onSelect = { id ->
+                            noteGuideUserNavigation()
                             selectedProviderId = id
                             selectedCategoryId = "all"
                             focusedChannelId = null

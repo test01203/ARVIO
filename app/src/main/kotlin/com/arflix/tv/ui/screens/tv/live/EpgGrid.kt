@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -120,6 +121,13 @@ fun EpgGrid(
         HashMap<String, Int>(channels.size).apply {
             channels.forEachIndexed { index, channel -> put(channel.id, index) }
         }
+    }
+    val channelWindowIdentity = remember(channels) {
+        listOf(
+            channels.size.toString(),
+            channels.firstOrNull()?.id.orEmpty(),
+            channels.lastOrNull()?.id.orEmpty(),
+        ).joinToString("|")
     }
     val selectedChannel = selectedChannelId?.let { id -> channelIndexById[id]?.let { index -> channels.getOrNull(index) } }
     val safeTotalChannelCount = totalChannelCount.coerceAtLeast(channels.size)
@@ -238,7 +246,7 @@ fun EpgGrid(
     // from outside (e.g. search result picked). Uses a keyed LaunchedEffect
     // on both selection and channel list identity so a late-arriving list
     // still lands on the right row.
-    LaunchedEffect(selectedChannelId, channels) {
+    LaunchedEffect(selectedChannelId, channelWindowIdentity) {
         if (didPositionInitialSelection) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
@@ -246,24 +254,33 @@ fun EpgGrid(
         didPositionInitialSelection = true
     }
 
-    LaunchedEffect(focusSelectedChannelSignal, selectedChannelId, channels) {
+    var handledSelectedFocusSignal by remember { mutableIntStateOf(0) }
+    LaunchedEffect(focusSelectedChannelSignal, selectedChannelId, channelWindowIdentity) {
         if (focusSelectedChannelSignal == 0) return@LaunchedEffect
+        if (handledSelectedFocusSignal == focusSelectedChannelSignal) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
         channelListState.scrollToItem(idx)
         runCatching { selectedChannelFocusRequester.requestFocus() }
+        handledSelectedFocusSignal = focusSelectedChannelSignal
     }
 
-    LaunchedEffect(focusEpgSignal, selectedChannelId, channels, windowStartMillis) {
+    var handledEpgFocusSignal by remember { mutableIntStateOf(0) }
+    LaunchedEffect(focusEpgSignal, selectedChannelId, channelWindowIdentity, windowStartMillis) {
         if (focusEpgSignal == 0) return@LaunchedEffect
+        if (handledEpgFocusSignal == focusEpgSignal) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
         val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
         repeat(6) {
-            if (requestNearestProgramFocus(idx, nowMin)) return@LaunchedEffect
+            if (requestNearestProgramFocus(idx, nowMin)) {
+                handledEpgFocusSignal = focusEpgSignal
+                return@LaunchedEffect
+            }
             delay(50L)
         }
         keepChannelFocus(idx)
+        handledEpgFocusSignal = focusEpgSignal
     }
 
     LaunchedEffect(windowStartMillis, channels.size, compact) {
