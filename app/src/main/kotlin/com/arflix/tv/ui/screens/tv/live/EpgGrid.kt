@@ -834,6 +834,14 @@ private fun effectiveCatchupDays(channel: EnrichedChannel): Int {
     val source = channel.source
     val hasCatchupMetadata = !source.catchupType.isNullOrBlank() || !source.catchupSource.isNullOrBlank()
     if (hasCatchupMetadata) return 7
+    if (source.xtreamStreamId != null ||
+        source.streamUrl.contains("/live/", ignoreCase = true) ||
+        source.streamUrl.contains("/timeshift/", ignoreCase = true) ||
+        source.id.contains(":xtream:", ignoreCase = true) ||
+        source.id.startsWith("xtream:", ignoreCase = true)
+    ) {
+        return 2
+    }
     return 0
 }
 

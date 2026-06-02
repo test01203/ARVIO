@@ -694,7 +694,11 @@ private fun EnrichedChannel.supportsFullscreenCatchup(): Boolean {
     val channelSource = this.source
     if (channelSource.catchupDays > 0) return true
     if (!channelSource.catchupType.isNullOrBlank() || !channelSource.catchupSource.isNullOrBlank()) return true
-    return false
+    if (channelSource.xtreamStreamId != null) return true
+    return channelSource.streamUrl.contains("/live/", ignoreCase = true) ||
+        channelSource.streamUrl.contains("/timeshift/", ignoreCase = true) ||
+        channelSource.id.contains(":xtream:", ignoreCase = true) ||
+        channelSource.id.startsWith("xtream:", ignoreCase = true)
 }
 
 private fun startsLabel(program: IptvProgram, nowMillis: Long): String {
