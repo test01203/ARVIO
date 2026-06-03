@@ -372,6 +372,9 @@ fun SettingsScreen(
             add("stremio")
             add("catalogs")
             add("home_server")
+            if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
+                add("plugins")
+            }
             add("appearance")
             add("network")
         }
@@ -644,6 +647,7 @@ fun SettingsScreen(
 
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
+                    if (currentSection == "plugins" && activeZone == Zone.CONTENT) return@onPreviewKeyEvent false
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
@@ -1465,6 +1469,14 @@ fun SettingsScreen(
                             onDeleteAddon = { viewModel.removeAddon(it) },
                             onAddCustomAddon = { showCustomAddonInput = true }
                         )
+                        "plugins" -> {
+                            com.arflix.tv.ui.screens.plugin.PluginScreen(
+                                onBackPressed = { activeZone = Zone.SECTION },
+                                onNavigateToSection = {
+                                    activeZone = Zone.SECTION
+                                }
+                            )
+                        }
                         "accounts" -> AccountsSettings(
                             isCloudAuthenticated = uiState.isLoggedIn,
                             cloudEmail = uiState.accountEmail,
@@ -8870,3 +8882,4 @@ private fun IptvCategoriesSettings(
         }
     }
 }
+
