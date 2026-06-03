@@ -36,6 +36,7 @@ private const val LargeIptvListChannelCount = 10_000
 private const val StandardPriorityEpgLimit = 3_200
 private const val LargeListPriorityCacheLimit = 360
 private const val RichCatchupRecentTarget = 6
+private const val CatchupHistoryWindowMs = 48L * 60L * 60_000L
 private const val RichCatchupRefreshThrottleMs = 45_000L
 private const val CurrentChannelEpgRefreshThrottleMs = 12_000L
 private const val LargeListCompleteGuideCoverageTarget = 0.75f
@@ -447,7 +448,7 @@ class TvViewModel @Inject constructor(
     ): Int {
         return item?.recent
             .orEmpty()
-            .count { it.catchupAvailable != false && it.endUtcMillis <= now && it.endUtcMillis >= now - 48L * 60L * 60_000L }
+            .count { it.catchupAvailable != false && it.endUtcMillis <= now && it.endUtcMillis >= now - CatchupHistoryWindowMs }
     }
 
     private fun hasRecentCatchupHistory(
@@ -456,7 +457,27 @@ class TvViewModel @Inject constructor(
         now: Long = System.currentTimeMillis()
     ): Boolean {
         if (!supportsCatchup(channel)) return true
-        return recentCatchupCount(item, now) >= RichCatchupRecentTarget
+        val targetWindowMs = catchupHistoryTargetWindowMs(channel)
+        val recent = item?.recent
+            .orEmpty()
+            .asSequence()
+            .filter { it.catchupAvailable != false }
+            .filter { it.endUtcMillis <= now && it.endUtcMillis >= now - targetWindowMs }
+            .toList()
+        if (recent.size < RichCatchupRecentTarget) return false
+        val oldestStart = recent.minOfOrNull { it.startUtcMillis } ?: return false
+        val coveredMs = now - oldestStart
+        return coveredMs >= (targetWindowMs * 3) / 4 || recent.size >= 24
+    }
+
+    private fun catchupHistoryTargetWindowMs(channel: IptvChannel?): Long {
+        val days = channel?.catchupDays?.coerceIn(0, 7) ?: 0
+        val hours = if (days > 0) {
+            minOf(48L, days * 24L)
+        } else {
+            48L
+        }
+        return hours * 60L * 60_000L
     }
 
     private suspend fun refreshGuideFromCache() {

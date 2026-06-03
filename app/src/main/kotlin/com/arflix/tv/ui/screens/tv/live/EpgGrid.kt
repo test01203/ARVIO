@@ -57,10 +57,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-private const val EpgPastWindowMinutes = 90
-private const val EpgFutureWindowMinutes = 12 * 60
-private const val CompactEpgPastWindowMinutes = 60
-private const val CompactEpgFutureWindowMinutes = 8 * 60
+private const val EpgPastWindowMinutes = 48 * 60
+private const val EpgFutureWindowMinutes = 24 * 60
+private const val CompactEpgPastWindowMinutes = 48 * 60
+private const val CompactEpgFutureWindowMinutes = 12 * 60
 private const val ChannelWindowPrefetchThreshold = 18
 
 enum class EpgGridFocusMode {

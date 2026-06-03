@@ -263,6 +263,8 @@ class IptvRepository @Inject constructor(
     private val epgRecentProgramLimit = 2
     private val xmlTvPastWindowMs = 48L * 60L * 60_000L
     private val xmlTvFutureWindowMs = 72L * 60L * 60_000L
+    private val catchupGuideHistoryWindowMs = 48L * 60L * 60_000L
+    private val indexedGuideFutureWarmMs = 6L * 60L * 60_000L
     private val completeEpgCoverageTarget = 0.98f
     private val xtreamShortEpgLimit = 24
     private val xtreamVisibleShortEpgLimit = 96
@@ -1814,8 +1816,11 @@ class IptvRepository @Inject constructor(
      */
     fun reDeriveCachedNowNext(channelIds: Set<String>): Map<String, IptvNowNext>? {
         val cached = cachedNowNext
+        val nowMs = System.currentTimeMillis()
+        val channelsById = cachedChannelLookup()
         val missingIndexedIds = channelIds.filterTo(LinkedHashSet()) { channelId ->
-            !hasProgramData(cached[channelId])
+            val guide = cached[channelId]
+            !hasProgramData(guide) || shouldLoadIndexedGuide(guide, channelsById[channelId], nowMs)
         }
         val indexKey = currentEpgIndexKey
         if (missingIndexedIds.isNotEmpty() && indexKey.isNotBlank()) {
@@ -1825,12 +1830,12 @@ class IptvRepository @Inject constructor(
                 System.err.println("[EPG-Index] Failed to read guide index: ${error.message}")
             }.getOrDefault(emptyMap())
             if (indexed.isNotEmpty()) {
-                cachedNowNext.putAll(indexed)
+                indexed.forEach { (channelId, indexedGuide) ->
+                    cachedNowNext[channelId] = mergeCachedGuideSlice(cachedNowNext[channelId], indexedGuide)
+                }
             }
         }
         if (cachedNowNext.isEmpty()) return null
-        val nowMs = System.currentTimeMillis()
-        val channelsById = cachedChannelLookup()
 
         val result = mutableMapOf<String, IptvNowNext>()
         for (channelId in channelIds) {
@@ -6325,9 +6330,79 @@ class IptvRepository @Inject constructor(
         val explicitDays = channel.catchupDays.coerceIn(0, 7)
         if (explicitDays > 0) return explicitDays
         val hasCatchupMetadata = !channel.catchupType.isNullOrBlank() || !channel.catchupSource.isNullOrBlank()
-        if (hasCatchupMetadata) return 7
+        val hasTimeshiftUrl = channel.streamUrl.contains("/timeshift/", ignoreCase = true)
+        if (hasCatchupMetadata || hasTimeshiftUrl) return 7
         if (forceCatchupHistory) return 2
         return 0
+    }
+
+    private fun shouldLoadIndexedGuide(item: IptvNowNext?, channel: IptvChannel?, nowMs: Long): Boolean {
+        if (item == null) return true
+        return !hasEnoughFutureGuide(item, nowMs) || !hasEnoughCatchupHistory(item, channel, nowMs)
+    }
+
+    private fun hasEnoughFutureGuide(item: IptvNowNext, nowMs: Long): Boolean {
+        val future = buildList {
+            item.next?.let(::add)
+            item.later?.let(::add)
+            addAll(item.upcoming)
+        }
+            .asSequence()
+            .filter { it.endUtcMillis > nowMs && it.startUtcMillis > nowMs }
+            .distinctBy { programKey(it) }
+            .sortedBy { it.startUtcMillis }
+            .toList()
+        if (future.size >= 6) return true
+        val farthestEnd = future.maxOfOrNull { it.endUtcMillis } ?: item.now?.endUtcMillis ?: 0L
+        return farthestEnd - nowMs >= indexedGuideFutureWarmMs
+    }
+
+    private fun hasEnoughCatchupHistory(item: IptvNowNext, channel: IptvChannel?, nowMs: Long): Boolean {
+        val days = effectiveCatchupDays(channel)
+        if (days <= 0) return true
+        val targetWindowMs = minOf(catchupGuideHistoryWindowMs, days * 24L * 60L * 60_000L)
+        val recent = item.recent
+            .asSequence()
+            .filter { it.catchupAvailable != false }
+            .filter { it.endUtcMillis <= nowMs && it.endUtcMillis >= nowMs - targetWindowMs }
+            .toList()
+        if (recent.size < 6) return false
+        val oldestStart = recent.minOfOrNull { it.startUtcMillis } ?: return false
+        val coveredMs = nowMs - oldestStart
+        return coveredMs >= (targetWindowMs * 3) / 4 || recent.size >= 24
+    }
+
+    private fun mergeCachedGuideSlice(existing: IptvNowNext?, fresh: IptvNowNext): IptvNowNext {
+        if (existing == null) return fresh
+        return IptvNowNext(
+            now = fresh.now ?: existing.now,
+            next = fresh.next ?: existing.next,
+            later = fresh.later ?: existing.later,
+            upcoming = mergeCachedPrograms(existing.upcoming, fresh.upcoming)
+                .asSequence()
+                .filter { it.startUtcMillis > 0L }
+                .take(epgUpcomingProgramLimit)
+                .toList(),
+            recent = mergeCachedPrograms(existing.recent, fresh.recent)
+                .takeLast(catchupRecentProgramLimit)
+        )
+    }
+
+    private fun mergeCachedPrograms(
+        existing: List<IptvProgram>,
+        fresh: List<IptvProgram>
+    ): List<IptvProgram> {
+        if (existing.isEmpty()) return fresh
+        if (fresh.isEmpty()) return existing
+        return (existing.asSequence() + fresh.asSequence())
+            .filter { it.title.isNotBlank() && it.endUtcMillis > it.startUtcMillis }
+            .distinctBy { programKey(it) }
+            .sortedBy { it.startUtcMillis }
+            .toList()
+    }
+
+    private fun programKey(program: IptvProgram): String {
+        return "${program.startUtcMillis}|${program.endUtcMillis}|${program.title}"
     }
 
     private fun hasAnyProgramData(nowNext: Map<String, IptvNowNext>): Boolean {
