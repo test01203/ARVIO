@@ -115,6 +115,8 @@ private enum class LiveTvFocusZone {
 private const val GuideInitialWindowRows = 120
 private const val GuidePageRows = 120
 private const val GuideMaxWindowRows = 420
+private const val GuideVisibleFirstRows = 28
+private const val GuideVisibleFirstRowsAllChannels = 18
 private const val CatchupSeekStepMs = 30_000L
 private const val CatchupUrlAnchorGranularityMs = 60_000L
 private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
@@ -262,7 +264,12 @@ private fun looksLikeMpegTsUrl(url: String): Boolean {
     val lower = url.lowercase()
     val path = lower.substringBefore('?')
     if (path.endsWith(".m3u8") || "output=m3u8" in lower) return false
-    if (path.endsWith(".ts") || "output=ts" in lower || path.contains("/timeshift/")) return true
+    if (
+        path.endsWith(".ts") ||
+        path.endsWith("timeshift.php") ||
+        "output=ts" in lower ||
+        path.contains("/timeshift/")
+    ) return true
 
     val segments = path
         .substringAfter("://", missingDelimiterValue = "")
@@ -325,12 +332,13 @@ private fun catchupQualityRank(channel: EnrichedChannel): Int = when (channel.qu
 
 private fun catchupPlaybackVariant(
     channel: EnrichedChannel,
-    catchupVariantGroups: Map<String, List<EnrichedChannel>>
+    channels: List<EnrichedChannel>
 ): EnrichedChannel {
     if (channel.hasExplicitCatchupSource()) return channel
-    val variants = catchupVariantGroups[variantGroupKey(channel)].orEmpty()
-    return variants
+    val key = variantGroupKey(channel)
+    return channels
         .asSequence()
+        .filter { it.id != channel.id && variantGroupKey(it) == key }
         .filter { it.hasExplicitCatchupSource() }
         .maxWithOrNull(
             compareBy<EnrichedChannel> { it.source.catchupDays }
@@ -543,14 +551,8 @@ fun LiveTvScreen(
     }
     val visibleChannels = visibleEnrichedState.value.all
     val variantGroups = remember(visibleChannels) { buildVariantGroups(visibleChannels) }
-    val catchupVariantGroups = remember(visibleChannels) { visibleChannels.groupBy(::variantGroupKey) }
     val allDisplayChannels = remember(visibleChannels, variantGroups) {
         collapseChannelVariants(visibleChannels, variantGroups)
-    }
-    val allDisplayChannelIndexById = remember(allDisplayChannels) {
-        HashMap<String, Int>(allDisplayChannels.size).apply {
-            allDisplayChannels.forEachIndexed { index, channel -> put(channel.id, index) }
-        }
     }
     val filteredChannels = remember(filteredChannelsState.value, variantGroups) {
         collapseChannelVariants(filteredChannelsState.value, variantGroups)
@@ -705,6 +707,7 @@ fun LiveTvScreen(
         ?: playingChannelId
     val epgPrefetchIds = remember(guideChannels, guideChannelIndexById, selectedCategoryId, epgAnchorChannelId) {
         val maxPrefetch = if (selectedCategoryId == "all") 96 else 180
+        val visibleFirstRows = if (selectedCategoryId == "all") GuideVisibleFirstRowsAllChannels else GuideVisibleFirstRows
         val anchorIndex = epgAnchorChannelId?.let(guideChannelIndexById::get) ?: 0
         buildList<String> {
             fun addChannel(channel: EnrichedChannel?) {
@@ -716,7 +719,25 @@ fun LiveTvScreen(
                 if (channel.hasGuideIdentity()) addChannel(channel)
             }
 
+            // First paint must target the selected row plus the rows visible
+            // below it. These may lack tvg-id but still have an Xtream stream
+            // id that can return direct short/full EPG data.
             addChannel(guideChannels.getOrNull(anchorIndex))
+            var nearIndex = anchorIndex + 1
+            var nearCount = 0
+            while (nearIndex < guideChannels.size && nearCount < visibleFirstRows && size < maxPrefetch) {
+                addChannel(guideChannels[nearIndex])
+                nearIndex++
+                nearCount++
+            }
+            var nearBackIndex = anchorIndex - 1
+            var nearBackCount = 0
+            while (nearBackIndex >= 0 && nearBackCount < 8 && size < maxPrefetch) {
+                addChannel(guideChannels[nearBackIndex])
+                nearBackIndex--
+                nearBackCount++
+            }
+
             var index = anchorIndex + 1
             while (index < guideChannels.size && size < maxPrefetch) {
                 addGuideFirst(index)
@@ -777,21 +798,35 @@ fun LiveTvScreen(
             )
         }
     }
-    val catchupHistoryAnchorId = remember(
+    val catchupHistoryAnchorIds = remember(
         epgAnchorChannelId,
         selectedDisplayChannelId,
         focusedChannelId,
         playingChannelId,
         visibleChannelsById,
+        visibleChannels,
     ) {
-        listOfNotNull(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId, playingChannelId)
-            .firstOrNull { id -> visibleChannelsById[id].supportsCatchupHistory() }
+        buildList {
+            listOfNotNull(epgAnchorChannelId, selectedDisplayChannelId, focusedChannelId, playingChannelId)
+                .forEach { id ->
+                    val channel = visibleChannelsById[id] ?: return@forEach
+                    if (channel.supportsCatchupHistory() && channel.id !in this) {
+                        add(channel.id)
+                    }
+                    val archiveVariant = catchupPlaybackVariant(channel, visibleChannels)
+                    if (archiveVariant.supportsCatchupHistory() && archiveVariant.id !in this) {
+                        add(archiveVariant.id)
+                    }
+                }
+        }.take(3)
     }
-    LaunchedEffect(catchupHistoryAnchorId, state.iptvPreferencesLoaded, state.tvSessionLoaded, startupChannelApplied) {
+    LaunchedEffect(catchupHistoryAnchorIds, state.iptvPreferencesLoaded, state.tvSessionLoaded, startupChannelApplied) {
         if (!state.iptvPreferencesLoaded || !state.tvSessionLoaded || !startupChannelApplied) return@LaunchedEffect
-        val id = catchupHistoryAnchorId ?: return@LaunchedEffect
-        delay(180L)
-        viewModel.refreshCatchupHistoryForChannel(id)
+        if (catchupHistoryAnchorIds.isEmpty()) return@LaunchedEffect
+        delay(120L)
+        catchupHistoryAnchorIds.forEach { id ->
+            viewModel.refreshCatchupHistoryForChannel(id)
+        }
     }
     val guideStatusIds = remember(epgPrefetchIds, guideChannels, visibleChannelsById, effectiveGuideNowNext) {
         epgPrefetchIds
@@ -932,7 +967,7 @@ fun LiveTvScreen(
         val all = allDisplayChannels
         if (all.isEmpty()) return
         val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-        val currentIdx = currentDisplayId?.let(allDisplayChannelIndexById::get) ?: -1
+        val currentIdx = currentDisplayId?.let { id -> all.indexOfFirst { channel -> channel.id == id } } ?: -1
         val start = if (currentIdx >= 0) currentIdx else 0
         val size = all.size
         val nextIdx = ((start + delta) % size + size) % size
@@ -1050,7 +1085,7 @@ fun LiveTvScreen(
     fun playProgramInMini(channel: EnrichedChannel, program: IptvProgram?) {
         noteGuideUserNavigation()
         val playbackChannel = if (program != null) {
-            catchupPlaybackVariant(channel, catchupVariantGroups)
+            catchupPlaybackVariant(channel, visibleChannels)
         } else {
             channel
         }
@@ -1076,7 +1111,7 @@ fun LiveTvScreen(
         }
         if (program != null) {
             playingChannel?.let { channel ->
-                val playbackChannel = catchupPlaybackVariant(channel, catchupVariantGroups)
+                val playbackChannel = catchupPlaybackVariant(channel, visibleChannels)
                 if (playbackChannel.id != channel.id) {
                     System.err.println(
                         "[IPTV-Catchup] using fullscreen archive variant source=${channel.id} " +

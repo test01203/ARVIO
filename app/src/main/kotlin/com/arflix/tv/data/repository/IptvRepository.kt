@@ -112,6 +112,8 @@ private object IptvIdSentinels {
     fun isReal(tmdb: Int): Boolean = tmdb > 0
 }
 
+private const val LargeIptvListChannelCount = 10_000
+
 data class IptvConfig(
     val m3uUrl: String = "",
     val epgUrl: String = "",
@@ -276,6 +278,7 @@ class IptvRepository @Inject constructor(
     private val cacheRecentProgramLimit = 1
     private val cacheCatchupRecentProgramLimit = 96
     private val catchupRecentProgramLimit = 1000
+    private val catchupProbeCandidateLimit = 40
     private val xtreamVodCacheMs = 6 * 60 * 60_000L
     private val iptvHttpClient: OkHttpClient by lazy {
         // Used for full playlist/EPG loading – generous timeouts for large
@@ -761,7 +764,7 @@ class IptvRepository @Inject constructor(
         val safeAttempt = startAttempt.coerceAtLeast(0)
         val ordered = candidates.drop(safeAttempt) + candidates.take(safeAttempt)
         return withContext(Dispatchers.IO) {
-            ordered.take(10).forEach { candidate ->
+            ordered.take(catchupProbeCandidateLimit).forEach { candidate ->
                 val probe = probePlaybackUrl(candidate, channel.requestHeaders)
                 if (probe != null && probe.isPlayable) {
                     System.err.println(
@@ -1366,14 +1369,26 @@ class IptvRepository @Inject constructor(
                 return@withContext snapshot
             }
 
-            val cachedFromDisk = if (cachedChannels.isEmpty()) readCache(config) else null
-            if (cachedFromDisk != null) {
-                cachedChannels = cachedFromDisk.channels
-                cachedGroupedChannels = buildGroupedChannels(cachedFromDisk.channels)
-                cachedNowNext = ConcurrentHashMap(cachedFromDisk.nowNext)
-                cachedPlaylistAt = cachedFromDisk.loadedAtEpochMs
-                cachedEpgAt = cachedFromDisk.loadedAtEpochMs
-                reDeriveCachedNowNext(cachedFromDisk.channels.asSequence().map { it.id }.toSet())
+            val cachedChannelsFromDisk = if (cachedChannels.isEmpty()) readChannelCache(config) else null
+            val cachedGuideFromDisk = if (
+                cachedChannelsFromDisk != null &&
+                cachedChannelsFromDisk.channels.size <= LargeIptvListChannelCount
+            ) {
+                readCache(config)
+            } else {
+                null
+            }
+            if (cachedChannelsFromDisk != null) {
+                cachedChannels = cachedChannelsFromDisk.channels
+                cachedGroupedChannels = buildGroupedChannels(cachedChannelsFromDisk.channels)
+                cachedNowNext = ConcurrentHashMap(cachedGuideFromDisk?.nowNext.orEmpty())
+                cachedPlaylistAt = cachedChannelsFromDisk.loadedAtEpochMs
+                cachedEpgAt = cachedGuideFromDisk?.loadedAtEpochMs ?: cachedChannelsFromDisk.loadedAtEpochMs
+                if (cachedChannelsFromDisk.channels.size <= LargeIptvListChannelCount) {
+                    reDeriveCachedNowNext(cachedChannelsFromDisk.channels.asSequence().map { it.id }.toSet())
+                } else {
+                    System.err.println("[EPG-Memory] large playlist warm start uses indexed guide only; channels=${cachedChannelsFromDisk.channels.size}")
+                }
             }
 
             val channels = if (!forcePlaylistReload && cachedChannels.isNotEmpty()) {
@@ -1417,8 +1432,12 @@ class IptvRepository @Inject constructor(
             // Publish channels immediately so the UI can show them while EPG loads.
             // Uses cached nowNext if available to paint initial EPG state.
             runCatching { onChannelsReady(channels) }
-            if ((forcePlaylistReload || cachedFromDisk == null) && channels.isNotEmpty()) {
-                val immediateNowNext = reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()).orEmpty()
+            if ((forcePlaylistReload || cachedChannelsFromDisk == null) && channels.isNotEmpty()) {
+                val immediateNowNext = if (channels.size > LargeIptvListChannelCount) {
+                    emptyMap()
+                } else {
+                    reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()).orEmpty()
+                }
                 writeCache(
                     config = config,
                     channels = channels,
@@ -1442,10 +1461,10 @@ class IptvRepository @Inject constructor(
             // Check if this is an Xtream provider (can use fast short EPG API)
             val xtreamProviderGroups = groupXtreamChannelsByCredentials(config, channels)
             val hasXtreamChannels = xtreamProviderGroups.isNotEmpty()
-            val shouldFetchBroadShortEpg = allowBroadShortEpg || epgCandidates.isEmpty() || channels.size <= 10_000
+            val shouldFetchBroadShortEpg = allowBroadShortEpg || epgCandidates.isEmpty() || channels.size <= LargeIptvListChannelCount
             System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamProviders=${xtreamProviderGroups.size} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size} broadShort=$shouldFetchBroadShortEpg")
-            val cachedFallbackNowNext = if (channels.size > 10_000) {
-                cachedNowNext
+            val cachedFallbackNowNext = if (channels.size > LargeIptvListChannelCount) {
+                emptyMap()
             } else {
                 reDeriveCachedNowNext(channels.asSequence().map { it.id }.toSet()) ?: cachedNowNext
             }
@@ -1513,7 +1532,7 @@ class IptvRepository @Inject constructor(
                 // by skipping this after short EPG; forced/background refreshes still run it.
                 val skipXmlTvAfterXtreamShort = hasXtreamChannels &&
                     !forceEpgReload &&
-                    channels.size > 10_000 &&
+                    channels.size > LargeIptvListChannelCount &&
                     shortEpgResult != null &&
                     hasAnyProgramData(shortEpgResult)
                 if (skipXmlTvAfterXtreamShort) {
@@ -1708,7 +1727,7 @@ class IptvRepository @Inject constructor(
                 epgWarning = epgWarning,
                 loadedAt = loadedAtInstant
             ).also {
-                if (forcePlaylistReload || forceEpgReload || cachedFromDisk == null || epgUpdated) {
+                if (forcePlaylistReload || forceEpgReload || cachedChannelsFromDisk == null || epgUpdated) {
                     writeCache(
                         config = config,
                         channels = channels,
@@ -1739,8 +1758,12 @@ class IptvRepository @Inject constructor(
                 cachedChannels = cached.channels
                 cachedGroupedChannels = buildGroupedChannels(cached.channels)
                 cachedPlaylistAt = cached.loadedAtEpochMs
-                val guideCache = readCache(config)
-                    ?.takeIf { it.nowNext.isNotEmpty() && hasAnyProgramData(it.nowNext) }
+                val guideCache = if (cached.channels.size <= LargeIptvListChannelCount) {
+                    readCache(config)
+                        ?.takeIf { it.nowNext.isNotEmpty() && hasAnyProgramData(it.nowNext) }
+                } else {
+                    null
+                }
                 if (guideCache != null) {
                     cachedNowNext = ConcurrentHashMap(guideCache.nowNext)
                     cachedEpgAt = guideCache.loadedAtEpochMs
@@ -1754,6 +1777,9 @@ class IptvRepository @Inject constructor(
                 } else {
                     cachedNowNext = ConcurrentHashMap()
                     cachedEpgAt = cached.loadedAtEpochMs
+                    if (cached.channels.size > LargeIptvListChannelCount) {
+                        System.err.println("[EPG-Memory] warm cache skipped full guide hydration for ${cached.channels.size} channels")
+                    }
                 }
             }
         }
@@ -1782,12 +1808,20 @@ class IptvRepository @Inject constructor(
                 }
 
                 if (cachedChannels.isEmpty()) {
-                    val cached = readCache(config) ?: return@withLock null
+                    val cached = readChannelCache(config) ?: return@withLock null
+                    val guideCache = if (cached.channels.size <= LargeIptvListChannelCount) {
+                        readCache(config)
+                    } else {
+                        null
+                    }
                     cachedChannels = cached.channels
                     cachedGroupedChannels = buildGroupedChannels(cached.channels)
-                    cachedNowNext = ConcurrentHashMap(cached.nowNext)
+                    cachedNowNext = ConcurrentHashMap(guideCache?.nowNext.orEmpty())
                     cachedPlaylistAt = cached.loadedAtEpochMs
-                    cachedEpgAt = cached.loadedAtEpochMs
+                    cachedEpgAt = guideCache?.loadedAtEpochMs ?: cached.loadedAtEpochMs
+                    if (cached.channels.size > LargeIptvListChannelCount) {
+                        System.err.println("[EPG-Memory] cached snapshot skipped full guide hydration for ${cached.channels.size} channels")
+                    }
                 }
 
                 val favoriteGroups = observeFavoriteGroups().first()
@@ -2018,12 +2052,21 @@ class IptvRepository @Inject constructor(
                 // mixing playback sources.
                 val providerLookupChannels = allChannelsByCredentials[creds]
                     ?.takeIf { it.isNotEmpty() }
+                    ?.let { allProviderChannels ->
+                        scopedProviderGuideLookupChannels(providerChannels, allProviderChannels)
+                    }
                     ?: providerChannels
                 val epgIdToChannelIds = mutableMapOf<String, MutableList<String>>()
                 val streamIdToChannelIds = mutableMapOf<String, MutableList<String>>()
                 for (ch in providerLookupChannels) {
                     ch.epgId?.let { eid ->
                         addChannelIdToLookup(epgIdToChannelIds, eid, ch.id)
+                    }
+                    ch.tvgName?.let { tvg ->
+                        addChannelIdToLookup(epgIdToChannelIds, tvg, ch.id)
+                    }
+                    ch.variantKey?.let { key ->
+                        addChannelIdToLookup(epgIdToChannelIds, key, ch.id)
                     }
                     resolveXtreamStreamId(ch)?.let { sid ->
                         streamIdToChannelIds.getOrPut(sid.toString()) { mutableListOf() }.add(ch.id)
@@ -5340,6 +5383,12 @@ class IptvRepository @Inject constructor(
             ch.epgId?.let { eid ->
                 addChannelIdToLookup(epgIdToChannelIds, eid, ch.id)
             }
+            ch.tvgName?.let { tvg ->
+                addChannelIdToLookup(epgIdToChannelIds, tvg, ch.id)
+            }
+            ch.variantKey?.let { key ->
+                addChannelIdToLookup(epgIdToChannelIds, key, ch.id)
+            }
             resolveXtreamStreamId(ch)?.let { sid ->
                 streamIdToChannelIds.getOrPut(sid.toString()) { mutableListOf() }.add(ch.id)
             }
@@ -5433,6 +5482,12 @@ class IptvRepository @Inject constructor(
         for (ch in channels) {
             ch.epgId?.let { eid ->
                 addChannelIdToLookup(epgIdToChannelIds, eid, ch.id)
+            }
+            ch.tvgName?.let { tvg ->
+                addChannelIdToLookup(epgIdToChannelIds, tvg, ch.id)
+            }
+            ch.variantKey?.let { key ->
+                addChannelIdToLookup(epgIdToChannelIds, key, ch.id)
             }
             resolveXtreamStreamId(ch)?.let { sid ->
                 streamIdToChannelIds.getOrPut(sid.toString()) { mutableListOf() }.add(ch.id)
@@ -5791,6 +5846,20 @@ class IptvRepository @Inject constructor(
                 .orEmpty()
             if (forceCatchupHistory && exactStreamIds.isNotEmpty()) {
                 resolvedChannelIds.addAll(exactStreamIds)
+                // Some providers only expose catch-up on one quality variant
+                // while all variants share the same EPG identity. Keep rows
+                // separate, but fan the guide history out inside the same
+                // provider/EPG family so 4K/FHD/HD/SD rows can all show the
+                // same aired programme list.
+                exactStreamIds.forEach { exactChannelId ->
+                    channelsById[exactChannelId]?.let { exactChannel ->
+                        resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, exactChannel.epgId))
+                        resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, exactChannel.tvgName))
+                        exactChannel.variantKey?.let { variantKey ->
+                            resolvedChannelIds.addAll(resolveChannelIdsFromLookup(epgIdToChannelIds, variantKey))
+                        }
+                    }
+                }
             } else {
                 // Match by epg_id / channel_id field
                 listing.channelId?.let { cid ->
@@ -6805,6 +6874,43 @@ class IptvRepository @Inject constructor(
             }
         }
         return emptyList()
+    }
+
+    private fun scopedProviderGuideLookupChannels(
+        requestedChannels: List<IptvChannel>,
+        allProviderChannels: List<IptvChannel>
+    ): List<IptvChannel> {
+        if (requestedChannels.isEmpty()) return emptyList()
+        if (requestedChannels.size > 256 || allProviderChannels.size <= requestedChannels.size) {
+            return allProviderChannels
+        }
+
+        val requestedGuideKeys = requestedChannels
+            .asSequence()
+            .flatMap { channel -> channel.guideLookupKeys().asSequence() }
+            .toSet()
+        if (requestedGuideKeys.isEmpty()) return requestedChannels
+
+        val scoped = LinkedHashMap<String, IptvChannel>(requestedChannels.size * 4)
+        requestedChannels.forEach { channel -> scoped[channel.id] = channel }
+
+        allProviderChannels.forEach { channel ->
+            if (channel.id in scoped) return@forEach
+            val matchesRequestedGuide = channel.guideLookupKeys().any { it in requestedGuideKeys }
+            if (matchesRequestedGuide) {
+                scoped[channel.id] = channel
+            }
+        }
+
+        return scoped.values.toList()
+    }
+
+    private fun IptvChannel.guideLookupKeys(): Set<String> {
+        val out = LinkedHashSet<String>()
+        guideKeyCandidates(epgId).forEach(out::add)
+        guideKeyCandidates(tvgName).forEach(out::add)
+        guideKeyCandidates(variantKey).forEach(out::add)
+        return out
     }
 
     private fun guideKeyCandidates(value: String?): Set<String> {
