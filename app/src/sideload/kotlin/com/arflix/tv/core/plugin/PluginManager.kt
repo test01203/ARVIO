@@ -70,9 +70,9 @@ class PluginManager @Inject constructor(
     private val moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
         .build()
-    
+
     private val manifestAdapter = moshi.adapter(PluginManifest::class.java)
-    
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -200,14 +200,14 @@ class PluginManager @Inject constructor(
     }
 
     private fun normalizeUrl(url: String): String = canonicalizeRepoUrl(url).lowercase()
-    
+
     // Single-flight map to prevent duplicate scraper executions
     private val inFlightScrapers = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<LocalScraperResult>>>()
-    
+
     // Semaphore to limit concurrent scrapers
     private val scraperSemaphore = Semaphore(MAX_CONCURRENT_SCRAPERS)
 
-    
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val pluginDispatcher: CoroutineDispatcher =
         Executors.newFixedThreadPool(MAX_CONCURRENT_SCRAPERS) { runnable ->
@@ -216,18 +216,18 @@ class PluginManager @Inject constructor(
                 isDaemon = true
             }
         }.asCoroutineDispatcher()
-    
+
     // Flow of all repositories
     val repositories: Flow<List<PluginRepository>> = dataStore.repositories
-    
+
     // Flow of all scrapers
     val scrapers: Flow<List<ScraperInfo>> = dataStore.scrapers
-    
+
     // Flow of plugins enabled state
     val pluginsEnabled: Flow<Boolean> = dataStore.pluginsEnabled
 
     val groupStreamsByRepository: Flow<Boolean> = dataStore.groupStreamsByRepository
-    
+
     private val syncScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + Dispatchers.IO
     )
@@ -278,7 +278,7 @@ class PluginManager @Inject constructor(
     ) { scraperList, enabled ->
         if (enabled) scraperList.filter { it.enabled } else emptyList()
     }
-    
+
     /**
      * Add a new repository from manifest URL.
      * Auto-detects format: tries NuvioTV manifest first, then external repo format.
@@ -300,7 +300,7 @@ class PluginManager @Inject constructor(
             val filename = sanitizedUrl.substringAfterLast("/")
             val isExplicitJsonFile = filename.endsWith(".json", ignoreCase = true)
                     && !filename.equals("manifest.json", ignoreCase = true)
-            
+
             val originalInput = manifestUrl.trim()
             val fallbackName = if (isShortCode(originalInput)) originalInput else null
 
@@ -433,7 +433,7 @@ class PluginManager @Inject constructor(
         triggerRemoteSync()
         return Result.success(repo)
     }
-    
+
     /**
      * Remove a repository and its scrapers
      */
@@ -467,7 +467,7 @@ class PluginManager @Inject constructor(
         }
     }
 
-    
+
     /**
      * Reconcile local plugin repos with the remote list from Supabase.
      * @param remotePlugins list of remote plugin info (URL + optional type hint)
@@ -540,7 +540,7 @@ class PluginManager @Inject constructor(
             removeMissingLocal = removeMissingLocal
         )
     }
-    
+
     /**
      * Refresh a repository - re-download manifest and scrapers
      */
@@ -593,7 +593,7 @@ class PluginManager @Inject constructor(
 
         return Result.success(Unit)
     }
-    
+
     /**
      * Toggle scraper enabled state
      */
@@ -626,7 +626,7 @@ class PluginManager @Inject constructor(
     suspend fun setGroupStreamsByRepository(enabled: Boolean) {
         dataStore.setGroupStreamsByRepository(enabled)
     }
-    
+
     /**
      * Execute all enabled scrapers for a given media
      */
@@ -639,14 +639,14 @@ class PluginManager @Inject constructor(
         if (!dataStore.pluginsEnabled.first()) {
             return@coroutineScope emptyList()
         }
-        
+
         val enabledScraperList = enabledScrapers.first()
             .filter { it.supportsType(mediaType) }
-        
+
         if (enabledScraperList.isEmpty()) {
             return@coroutineScope emptyList()
         }
-        
+
         Log.d(TAG, "Executing ${enabledScraperList.size} scrapers for $mediaType:$tmdbId")
 
         // Preload all extractors from EXTERNAL_DEX repos before any scraper runs
@@ -667,12 +667,12 @@ class PluginManager @Inject constructor(
                 executeScraperWithSingleFlight(scraper, tmdbId, mediaType, season, episode)
             }
         }.awaitAll()
-        
+
         results.flatten()
             .distinctBy { it.url }
             .take(MAX_RESULT_ITEMS)
     }
-    
+
     /**
      * Execute all enabled scrapers and emit results as each scraper completes.
      * Returns a Flow that emits (scraperName, results) pairs.
@@ -685,11 +685,11 @@ class PluginManager @Inject constructor(
     ): Flow<Pair<ScraperInfo, List<LocalScraperResult>>> = channelFlow {
         val enabledList = enabledScrapers.first()
             .filter { it.supportsType(mediaType) }
-        
+
         if (enabledList.isEmpty() || !dataStore.pluginsEnabled.first()) {
             return@channelFlow
         }
-        
+
         Log.d(TAG, "Streaming execution of ${enabledList.size} scrapers for $mediaType:$tmdbId")
 
         // Preload all extractors from EXTERNAL_DEX repos before any scraper runs
@@ -714,7 +714,7 @@ class PluginManager @Inject constructor(
             }
         }
     }
-    
+
     /**
      * Execute a single scraper with single-flight deduplication
      */
@@ -726,7 +726,7 @@ class PluginManager @Inject constructor(
         episode: Int?
     ): List<LocalScraperResult> {
         val cacheKey = "${scraper.id}:$tmdbId:$mediaType:$season:$episode"
-        
+
         // Check if already in flight
         val existing = inFlightScrapers[cacheKey]
         if (existing != null) {
@@ -736,7 +736,7 @@ class PluginManager @Inject constructor(
                 emptyList()
             }
         }
-        
+
         // Create new deferred
         return coroutineScope {
             val deferred = async {
@@ -744,9 +744,9 @@ class PluginManager @Inject constructor(
                     executeScraper(scraper, tmdbId, mediaType, season, episode)
                 }
             }
-            
+
             inFlightScrapers[cacheKey] = deferred
-            
+
             try {
                 deferred.await()
             } catch (e: Exception) {
@@ -757,7 +757,7 @@ class PluginManager @Inject constructor(
             }
         }
     }
-    
+
     /**
      * Execute a single scraper, dispatching by type.
      */
@@ -803,7 +803,7 @@ class PluginManager @Inject constructor(
             }
 
             val settings = dataStore.getScraperSettings(scraper.id)
-            
+
             Log.d(TAG, "Executing scraper: ${scraper.name}")
             val results = withTimeoutOrNull(SCRAPER_TIMEOUT_MS) {
                 // Run plugin JS on the dedicated low-priority pool so a buggy
@@ -863,7 +863,7 @@ class PluginManager @Inject constructor(
             emptyList()
         }
     }
-    
+
     /**
      * Test a scraper with sample data, returning results along with diagnostic steps.
      */
@@ -912,14 +912,14 @@ class PluginManager @Inject constructor(
             Result.success(emptyList<LocalScraperResult>() to diagnostics)
         }
     }
-    
+
     private suspend fun fetchManifest(url: String): PluginManifest? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "NuvioTV/1.0")
                 .build()
-            
+
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.e(TAG, "Failed to fetch manifest: ${response.code}")
@@ -929,13 +929,13 @@ class PluginManager @Inject constructor(
                 val body = response.body?.string() ?: return@withContext null
                 manifestAdapter.fromJson(body)
             }
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching manifest: ${e.message}", e)
             null
         }
     }
-    
+
     private suspend fun downloadJsScrapers(
         repoId: String,
         manifestUrl: String,
@@ -943,7 +943,7 @@ class PluginManager @Inject constructor(
     ) = withContext(Dispatchers.IO) {
         val baseUrl = manifestUrl.substringBeforeLast("/")
         val existingScrapers = dataStore.scrapers.first().toMutableList()
-        
+
         scraperInfos.forEach { info ->
             try {
                 val codeUrl = if (info.filename.startsWith("http")) {
@@ -951,28 +951,28 @@ class PluginManager @Inject constructor(
                 } else {
                     "$baseUrl/${info.filename}"
                 }
-                
+
                 // Check response size before downloading
                 val headRequest = Request.Builder()
                     .url(codeUrl)
                     .head()
                     .build()
-                
+
                 val contentLength = httpClient.newCall(headRequest).execute().use { headResponse ->
                     headResponse.header("Content-Length")?.toLongOrNull() ?: 0
                 }
-                
+
                 if (contentLength > MAX_RESPONSE_SIZE) {
                     Log.w(TAG, "Scraper ${info.name} too large: $contentLength bytes")
                     return@forEach
                 }
-                
+
                 // Download code
                 val codeRequest = Request.Builder()
                     .url(codeUrl)
                     .header("User-Agent", "NuvioTV/1.0")
                     .build()
-                
+
                 val code = httpClient.newCall(codeRequest).execute().use { codeResponse ->
                     if (!codeResponse.isSuccessful) {
                         Log.e(TAG, "Failed to download scraper ${info.name}: ${codeResponse.code}")
@@ -993,7 +993,7 @@ class PluginManager @Inject constructor(
                 } catch (_: Exception) {
                     // ignore
                 }
-                
+
                 // Create scraper info
                 val scraperId = "$repoId:${info.id}"
                 val existingScraper = existingScrapers.firstOrNull { it.id == scraperId }
@@ -1002,12 +1002,12 @@ class PluginManager @Inject constructor(
                     pluginPackage = scraperId,
                     filename = info.filename
                 )
-                
+
                 if (!isSafe) {
                     Log.w(TAG, "Skipping unsafe scraper: ${info.name}")
                     return@forEach
                 }
-                
+
                 val defaultEnabled = info.enabled
                 val scraper = ScraperInfo(
                     id = scraperId,
@@ -1023,21 +1023,21 @@ class PluginManager @Inject constructor(
                     contentLanguage = info.contentLanguage ?: emptyList(),
                     formats = info.formats
                 )
-                
+
                 // Save code
                 dataStore.saveScraperCode(scraperId, code)
-                
+
                 // Update scraper list
                 existingScrapers.removeAll { it.id == scraperId }
                 existingScrapers.add(scraper)
-                
+
                 Log.d(TAG, "Downloaded scraper: ${info.name}")
-                
+
             } catch (e: Exception) {
                 Log.e(TAG, "Error downloading scraper ${info.name}: ${e.message}", e)
             }
         }
-        
+
         dataStore.saveScrapers(existingScrapers)
     }
 

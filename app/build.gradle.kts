@@ -547,7 +547,7 @@ kotlin {
 dependencies {
     ksp("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
     annotationProcessor("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
-    
+
     // Plugin system dependencies (Sideload flavor only)
     add("sideloadImplementation", files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
     add("sideloadImplementation", "com.fasterxml.jackson.core:jackson-databind:2.17.0")
@@ -558,7 +558,7 @@ dependencies {
         exclude(group = "org.mozilla", module = "rhino")
     }
     add("sideloadImplementation", "org.webjars.npm:crypto-js:4.2.0")
-    
+
     // Moshi - used in both sideload plugins and main data store
     implementation("com.squareup.moshi:moshi:1.15.1")
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")

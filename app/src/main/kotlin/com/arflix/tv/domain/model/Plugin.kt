@@ -145,5 +145,3 @@ data class ExternalPluginEntry(
     val fileSize: Long? = null,
     val repositoryUrl: String? = null
 )
-
-

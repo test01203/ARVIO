@@ -80,8 +80,8 @@ class PluginDataStore @Inject constructor(
     }
 
     suspend fun saveRepositories(repos: List<PluginRepository>) {
-            
-            
+
+
         val json = moshi.adapter<List<PluginRepository>>(repoListType).toJson(repos)
         store().edit { prefs ->
             prefs[repositoriesKey] = json
@@ -89,8 +89,8 @@ class PluginDataStore @Inject constructor(
     }
 
     suspend fun addRepository(repo: PluginRepository) {
-            
-            
+
+
         val current = repositories.first().toMutableList()
         current.removeAll { it.id == repo.id }
         current.add(repo)
@@ -98,8 +98,8 @@ class PluginDataStore @Inject constructor(
     }
 
     suspend fun removeRepository(repoId: String) {
-            
-            
+
+
         val current = repositories.first().toMutableList()
         current.removeAll { it.id == repoId }
         saveRepositories(current)
@@ -131,8 +131,8 @@ class PluginDataStore @Inject constructor(
     }
 
     suspend fun saveScrapers(scrapers: List<ScraperInfo>) {
-            
-            
+
+
         val json = moshi.adapter<List<ScraperInfo>>(scraperListType).toJson(scrapers)
         store().edit { prefs ->
             prefs[scrapersKey] = json
@@ -159,8 +159,8 @@ class PluginDataStore @Inject constructor(
     }
 
     suspend fun setPluginsEnabled(enabled: Boolean) {
-            
-            
+
+
         store().edit { prefs ->
             prefs[pluginsEnabledKey] = enabled
         }
@@ -173,8 +173,8 @@ class PluginDataStore @Inject constructor(
     }
 
     suspend fun setGroupStreamsByRepository(enabled: Boolean) {
-            
-            
+
+
         store().edit { prefs ->
             prefs[groupStreamsByRepositoryKey] = enabled
         }

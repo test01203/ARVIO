@@ -37,7 +37,7 @@ object PluginRuntimeHooks {
      */
     fun ensureCloudstreamInitialized() {
         if (isCloudstreamInitialized) return
-        
+
         synchronized(this) {
             if (isCloudstreamInitialized) return
             val currentApp = application ?: return
@@ -62,7 +62,7 @@ object PluginRuntimeHooks {
             } catch (e: Throwable) {
                 Log.w("NuvioApplication", "Failed to initialize NiceHttp client (API ${Build.VERSION.SDK_INT}): ${e.message}")
             }
-            
+
             isCloudstreamInitialized = true
         }
     }

@@ -386,7 +386,7 @@ class PluginRuntime @Inject constructor() {
                 """.trimIndent()
 
                     evaluate<Any?>(callCode)
-                
+
                 // Wait for the JS async execution to finish and capture the result
                 resultJson = resultChannel.receive()
             }
@@ -679,7 +679,7 @@ class PluginRuntime @Inject constructor() {
                         return Promise.resolve(parsed.body);
                     },
                     json: function() {
-                        
+
                         try {
                             if (parsed.body === null || parsed.body === undefined || parsed.body === '') {
                                 return Promise.resolve(null);
@@ -1286,7 +1286,7 @@ class PluginRuntime @Inject constructor() {
                     is Map<*, *> -> (urlValue["url"] as? String)?.takeIf { it.isNotBlank() }
                     else -> null
                 } ?: return@mapNotNull null
-                
+
                 // Parse headers if present
                 val headersValue = item["headers"]
                 val headers: Map<String, String>? = when (headersValue) {
@@ -1296,10 +1296,10 @@ class PluginRuntime @Inject constructor() {
                         .takeIf { it.isNotEmpty() }
                     else -> null
                 }
-                
+
                 LocalScraperResult(
-                    title = item["title"]?.toString()?.takeIf { !it.contains("[object") } 
-                        ?: item["name"]?.toString()?.takeIf { !it.contains("[object") } 
+                    title = item["title"]?.toString()?.takeIf { !it.contains("[object") }
+                        ?: item["name"]?.toString()?.takeIf { !it.contains("[object") }
                         ?: "Unknown",
                     name = item["name"]?.toString()?.takeIf { !it.contains("[object") },
                     url = url,

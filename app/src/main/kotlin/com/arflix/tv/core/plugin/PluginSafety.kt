@@ -1,7 +1,7 @@
 package com.arflix.tv.core.plugin
 
 internal object PluginSafety {
-    
+
     // List of known dangerous package names/prefixes that should be blocked
     private val BLOCKED_PACKAGES = setOf(
         "com.google",

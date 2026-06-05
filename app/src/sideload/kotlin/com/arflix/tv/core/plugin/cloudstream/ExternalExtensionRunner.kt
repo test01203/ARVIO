@@ -766,17 +766,17 @@ class ExternalExtensionRunner @Inject constructor(
             episodes.firstOrNull { it.episode == episode && (it.season == null || it.season == season) }
                 ?.let { return it }
         }
-        
+
         // 3. Fallback: Check if the episode name contains the episode number
         if (episode != null) {
             val epStr1 = "Episode $episode"
             val epStr2 = "Ep. $episode"
             val epStr3 = "Ep $episode"
             val epStr4 = "E$episode"
-            episodes.firstOrNull { ep -> 
+            episodes.firstOrNull { ep ->
                 val epName = ep.name
-                ep.season == null && ep.episode == null && epName != null && 
-                (epName.contains(epStr1, ignoreCase = true) || 
+                ep.season == null && ep.episode == null && epName != null &&
+                (epName.contains(epStr1, ignoreCase = true) ||
                  epName.contains(epStr2, ignoreCase = true) ||
                  epName.contains(epStr3, ignoreCase = true) ||
                  epName.contains(epStr4, ignoreCase = true))

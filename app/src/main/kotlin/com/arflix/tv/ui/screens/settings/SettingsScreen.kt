@@ -512,7 +512,7 @@ fun SettingsScreen(
             dnsProviderPickerIndex = if (targetIndex >= 0) targetIndex else dnsProviderPickerIndex.coerceIn(0, maxIndex)
         }
     }
-    
+
     // Reset content scroll AND position cache when switching sections.
     LaunchedEffect(sectionIndex) {
         focusTracker.clear()
@@ -1192,7 +1192,7 @@ fun SettingsScreen(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     Text(
                         text = "ARVIO V${BuildConfig.VERSION_NAME}",
                         style = ArflixTypography.caption,
@@ -1708,7 +1708,7 @@ fun SettingsScreen(
             )
         }
 
-        
+
 
         if (showCatalogInput) {
             CatalogDiscoveryModal(
@@ -4116,7 +4116,7 @@ private fun SettingsSectionItem(
         else -> TextSecondary
     }
     val accentColor = resolveAccentColor(fallback = Pink)
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -7584,7 +7584,7 @@ private fun AccountRow(
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
-            
+
             if (isConnected) {
                 Box(
                     modifier = Modifier
@@ -7623,7 +7623,7 @@ private fun AccountRow(
                 }
             }
         }
-        
+
         // Show expiration date when connected
         if (isConnected && expirationText != null) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -8854,7 +8854,7 @@ private fun IptvCategoriesSettings(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        
+
         SettingsRow(
             icon = Icons.Default.Refresh,
             title = "Reset Order",
@@ -8864,7 +8864,7 @@ private fun IptvCategoriesSettings(
             onClick = onReset,
             modifier = Modifier.settingsFocusSlot(0)
         )
-        
+
         Spacer(modifier = Modifier.height(16.dp))
 
         if (isMobile) {
