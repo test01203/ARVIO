@@ -278,7 +278,7 @@ enum class AddonType {
 }
 
 enum class RuntimeKind {
-    STREMIO
+    STREMIO, TELEGRAM
 }
 
 enum class AddonInstallSource {

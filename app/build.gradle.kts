@@ -1,3 +1,6 @@
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -161,6 +164,25 @@ android {
     baselineProfile {
         mergeIntoMain = true
     }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDir("src/main/tdlib-java")
+        }
+    }
+
+    // Per-ABI APKs for sideload distribution only.
+    // Play builds are distributed via AAB (Google Play handles splitting) so splits are not needed.
+    // x86/x86_64 splits are emulator/debug use only.
+    val isSideloadBuild = gradle.startParameter.taskNames.any { it.contains("sideload", ignoreCase = true) }
+    splits {
+        abi {
+            isEnable = isSideloadBuild
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
 }
 
 // Kotlin 2.0+ Compose compiler plugin config. The stability config file
@@ -263,6 +285,11 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.0.4")
     implementation("io.github.jan-tennert.supabase:gotrue-kt:2.0.4")
     implementation("io.ktor:ktor-client-android:2.3.7")
+
+    // Telegram native integration — local HTTP streaming proxy + TDLib Java API
+    // libtdjni.so and TdApi.java are downloaded automatically by the downloadTdlibNatives task
+    implementation("io.ktor:ktor-server-cio:2.3.7")
+    implementation("io.ktor:ktor-server-core:2.3.7")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
@@ -378,6 +405,110 @@ tasks.configureEach {
     ) {
         dependsOn(validateReleaseSupabaseSecrets)
     }
+}
+
+// Downloads prebuilt TDLib Android natives + Java API sources on first build.
+// Files are cached — re-download only if arm64-v8a libtdjni.so is missing.
+//
+// Provenance:
+//   Source repo : https://github.com/FaiBah/tdlib-android-prebuilt
+//   Release tag : v1.8.64-e0943d0-Java
+//   TDLib version: 1.8.64, commit e0943d0 (https://github.com/tdlib/td)
+//   License      : Boost Software License 1.0 (https://www.boost.org/LICENSE_1_0.txt)
+//
+// SHA-256 of extracted libtdjni.so per ABI (verified after download):
+//   arm64-v8a  : fd0509edd49107af27e4799caac226f3cc365b273f56df79bf4d7708c6dfa879
+//   armeabi-v7a: 971d7abafa0e6a6c1cae31397d6b2c4255064938b7472874b88633b5bde58b5e
+//   x86        : 626c06f2de659b925e63e139bc0e3d4e7bc28d3718d7aa7ac3b67f671238d513
+//   x86_64     : a652be5eed71dfce7791f80658cbd78742fb6f5341dbbb9e62b31be3a8cb8984
+tasks.register("downloadTdlibNatives") {
+    val marker = project.file("src/main/jniLibs/arm64-v8a/libtdjni.so")
+    onlyIf { !marker.exists() }
+
+    doLast {
+        val base = "https://github.com/FaiBah/tdlib-android-prebuilt/releases/download/v1.8.64-e0943d0-Java"
+
+        val expectedChecksums = mapOf(
+            "arm64-v8a"   to "fd0509edd49107af27e4799caac226f3cc365b273f56df79bf4d7708c6dfa879",
+            "armeabi-v7a" to "971d7abafa0e6a6c1cae31397d6b2c4255064938b7472874b88633b5bde58b5e",
+            "x86"         to "626c06f2de659b925e63e139bc0e3d4e7bc28d3718d7aa7ac3b67f671238d513",
+            "x86_64"      to "a652be5eed71dfce7791f80658cbd78742fb6f5341dbbb9e62b31be3a8cb8984"
+        )
+
+        fun verifySha256(file: File, expected: String) {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val actual = file.inputStream().use { stream ->
+                val buf = ByteArray(8192)
+                var n: Int
+                while (stream.read(buf).also { n = it } != -1) digest.update(buf, 0, n)
+                digest.digest().joinToString("") { "%02x".format(it) }
+            }
+            require(actual == expected) {
+                "Checksum mismatch for ${file.name}: expected $expected but got $actual"
+            }
+        }
+
+        fun fetch(urlStr: String, dest: File) {
+            dest.parentFile.mkdirs()
+            var url = URL(urlStr)
+            var conn = url.openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connect()
+            while (conn.responseCode in 300..399) {
+                url = URL(conn.getHeaderField("Location"))
+                conn = url.openConnection() as HttpURLConnection
+                conn.instanceFollowRedirects = true
+                conn.connect()
+            }
+            conn.inputStream.use { inp -> dest.outputStream().use { inp.copyTo(it) } }
+        }
+
+        // arm64-v8a: .so + Java source files
+        val arm64Zip = File(temporaryDir, "tdlib-arm64-v8a.zip")
+        logger.lifecycle("Downloading TDLib arm64-v8a (~22 MB)...")
+        fetch("$base/tdlib-arm64-v8a.zip", arm64Zip)
+        project.copy {
+            from(project.zipTree(arm64Zip)) {
+                include("libs/arm64-v8a/libtdjni.so")
+                eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+                includeEmptyDirs = false
+            }
+            into("src/main/jniLibs")
+        }
+        verifySha256(project.file("src/main/jniLibs/arm64-v8a/libtdjni.so"), expectedChecksums["arm64-v8a"]!!)
+        project.copy {
+            from(project.zipTree(arm64Zip)) {
+                include("java/org/drinkless/tdlib/*.java")
+                eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+                includeEmptyDirs = false
+            }
+            into("src/main/tdlib-java")
+        }
+        arm64Zip.delete()
+
+        // remaining ABIs: .so only
+        listOf("armeabi-v7a", "x86", "x86_64").forEach { abi ->
+            val zipFile = File(temporaryDir, "tdlib-$abi.zip")
+            logger.lifecycle("Downloading TDLib $abi...")
+            fetch("$base/tdlib-$abi.zip", zipFile)
+            project.copy {
+                from(project.zipTree(zipFile)) {
+                    include("libs/$abi/libtdjni.so")
+                    eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+                    includeEmptyDirs = false
+                }
+                into("src/main/jniLibs")
+            }
+            verifySha256(project.file("src/main/jniLibs/$abi/libtdjni.so"), expectedChecksums[abi]!!)
+            zipFile.delete()
+        }
+
+        logger.lifecycle("TDLib natives ready — all checksums verified.")
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("downloadTdlibNatives")
 }
 
 detekt {

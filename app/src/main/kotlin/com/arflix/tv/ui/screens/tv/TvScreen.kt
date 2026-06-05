@@ -119,6 +119,7 @@ import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.AppTopBar
+import com.arflix.tv.ui.components.KeepScreenOn
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.ui.components.SidebarItem
@@ -137,6 +138,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+
+
+private object TvScreenRegexes {
+    val NON_ALPHANUMERIC_REGEX = Regex("""[^a-z0-9]+""")
+}
 
 private enum class TvFocusZone {
     SIDEBAR,
@@ -169,7 +175,7 @@ private fun preferredStartupGroup(
 private fun String.isPriorityGuideGroup(): Boolean {
     if (this == FAVORITES_GROUP_NAME) return true
     val tokens = lowercase()
-        .split(Regex("[^a-z0-9]+"))
+        .split(TvScreenRegexes.NON_ALPHANUMERIC_REGEX)
         .filter { it.isNotBlank() }
         .toSet()
     return "netherlands" in tokens || "nederland" in tokens || "nl" in tokens
@@ -240,6 +246,7 @@ fun TvScreen(
     var channelIndex by rememberSaveable { mutableIntStateOf(0) }
     var selectedChannelId by rememberSaveable { mutableStateOf<String?>(null) }
     var playingChannelId by rememberSaveable { mutableStateOf<String?>(null) }
+    KeepScreenOn(active = playingChannelId != null)
     var showGroupContextMenu by remember { mutableStateOf(false) }
     // When launched from Home with a stream URL, start in fullscreen immediately
     // to avoid a flash of the TV page channel list.

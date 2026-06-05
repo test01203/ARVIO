@@ -118,6 +118,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
@@ -221,6 +222,18 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
     }
 }
 
+private fun orderedIptvGroups(
+    playlistId: String,
+    availableGroups: List<String>,
+    groupOrder: List<String>
+): List<String> {
+    val explicitOrder = groupOrder
+        .map { com.arflix.tv.data.model.PlaylistGroupKey(it) }
+        .filter { it.playlistId == playlistId }
+        .map { it.groupName }
+    return (explicitOrder + availableGroups).distinct()
+}
+
 private fun openExternalUrl(context: Context, url: String) {
     runCatching {
         context.startActivity(
@@ -273,6 +286,7 @@ fun SettingsScreen(
     onNavigateToSearch: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
     onNavigateToWatchlist: () -> Unit = {},
+    onNavigateToTelegramSettings: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onBack: () -> Unit = {}
 ) {
@@ -383,14 +397,18 @@ fun SettingsScreen(
         when (section) {
             in tvGeneralSectionIds -> (tvGeneralRowsForSection(section).size - 1).coerceAtLeast(0)
             "iptv" -> if (showIptvCategoriesSettings) {
-                uiState.iptvAvailableGroups.size // Reset row + category rows
+                orderedIptvGroups(
+                    playlistId = uiState.iptvSelectedPlaylistId.orEmpty(),
+                    availableGroups = uiState.iptvAvailableGroups,
+                    groupOrder = uiState.iptvGroupOrder
+                ).size // Reset row + category rows
             } else {
                 2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size // Add + rows
             "stremio" -> stremioAddons.size // rows + add button
-            "accounts" -> 4 // Cloud + Trakt + Force Sync + App Update + Privacy/Data
+            "accounts" -> 5 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data
             else -> 0
         }
     }
@@ -856,12 +874,11 @@ fun SettingsScreen(
                                         "iptv" -> {
                                             if (showIptvCategoriesSettings) {
                                                 val playlistId = uiState.iptvSelectedPlaylistId.orEmpty()
-                                                val orderedGroups = (
-                                                    uiState.iptvGroupOrder
-                                                        .map { com.arflix.tv.data.model.PlaylistGroupKey(it) }
-                                                        .filter { it.playlistId == playlistId }
-                                                        .map { it.groupName } + uiState.iptvAvailableGroups
-                                                ).distinct()
+                                                val orderedGroups = orderedIptvGroups(
+                                                    playlistId = playlistId,
+                                                    availableGroups = uiState.iptvAvailableGroups,
+                                                    groupOrder = uiState.iptvGroupOrder
+                                                )
                                                 when {
                                                     contentFocusIndex == 0 -> {
                                                         viewModel.resetIptvGroupOrder(playlistId)
@@ -1016,10 +1033,9 @@ fun SettingsScreen(
                                                         viewModel.startTraktAuth()
                                                     }
                                                 }
-                                                2 -> {
-                                                    viewModel.forceCloudSyncNow()
-                                                }
-                                                3 -> {
+                                                2 -> onNavigateToTelegramSettings()
+                                                3 -> viewModel.forceCloudSyncNow()
+                                                4 -> {
                                                     if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
                                                     } else {
@@ -1080,7 +1096,8 @@ fun SettingsScreen(
                     showPlexHomeServerInput = true
                 },
                 onAddCustomAddonClick = { showCustomAddonInput = true },
-                openCustomUserAgentDialog = { showCustomUserAgentDialog = true }
+                openCustomUserAgentDialog = { showCustomUserAgentDialog = true },
+                onNavigateToTelegram = onNavigateToTelegramSettings
             )
         } else {
             AppTopBar(
@@ -1505,7 +1522,8 @@ fun SettingsScreen(
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
-                            onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
+                            onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) },
+                            onNavigateToTelegram = onNavigateToTelegramSettings
                         )
                     }
                   }
@@ -3170,7 +3188,8 @@ private fun MobileSettingsLayout(
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
-    openCustomUserAgentDialog: () -> Unit = {}
+    openCustomUserAgentDialog: () -> Unit = {},
+    onNavigateToTelegram: () -> Unit = {}
 ) {
     BackHandler(enabled = page != "MAIN") {
         onNavigate("MAIN")
@@ -3211,7 +3230,8 @@ private fun MobileSettingsLayout(
                 openSubtitlePicker = openSubtitlePicker,
                 openSecondarySubtitlePicker = openSecondarySubtitlePicker,
                 openAudioLanguagePicker = openAudioLanguagePicker,
-                onSwitchProfile = onSwitchProfile
+                onSwitchProfile = onSwitchProfile,
+                onNavigateToTelegram = onNavigateToTelegram
             )
         } else {
             Row(
@@ -3270,7 +3290,8 @@ private fun MobileSettingsMainPage(
     openSubtitlePicker: () -> Unit,
     openSecondarySubtitlePicker: () -> Unit = {},
     openAudioLanguagePicker: () -> Unit,
-    onSwitchProfile: () -> Unit
+    onSwitchProfile: () -> Unit,
+    onNavigateToTelegram: () -> Unit = {}
 ) {
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -3384,6 +3405,13 @@ private fun MobileSettingsMainPage(
                     value = if (uiState.isTraktAuthenticated) "Disconnect" else "Connect",
                     isFocused = false,
                     onClick = { if (uiState.isTraktAuthenticated) viewModel.disconnectTrakt() else viewModel.startTraktAuth() }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.QrCode,
+                    title = "Telegram",
+                    value = "Open",
+                    isFocused = false,
+                    onClick = onNavigateToTelegram
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.SystemUpdate,
@@ -6951,6 +6979,18 @@ private fun CatalogActionChip(
     Box(
         modifier = Modifier
             .size(36.dp)
+            .onPreviewKeyEvent { event ->
+                if (!enabled || !isFocused || event.type != KeyEventType.KeyDown) {
+                    return@onPreviewKeyEvent false
+                }
+                when (event.key) {
+                    Key.Enter, Key.DirectionCenter -> {
+                        onClick()
+                        true
+                    }
+                    else -> false
+                }
+            }
             .clickable(enabled = enabled, onClick = onClick)
             .background(bgColor, RoundedCornerShape(8.dp))
             .border(
@@ -7235,7 +7275,8 @@ private fun AccountsSettings(
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
-    onOpenDataDeletion: () -> Unit
+    onOpenDataDeletion: () -> Unit,
+    onNavigateToTelegram: () -> Unit = {}
 ) {
     Column {
         if (LocalDeviceType.current.isTouchDevice()) {
@@ -7282,6 +7323,18 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Telegram
+        SettingsActionRow(
+            title = "Telegram",
+            description = "Search your channels and groups for video files",
+            actionLabel = "OPEN",
+            isFocused = focusedIndex == 2,
+            onClick = onNavigateToTelegram,
+            modifier = Modifier.settingsFocusSlot(2)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         SettingsActionRow(
             title = stringResource(R.string.force_cloud_sync),
             description = if (isForceCloudSyncing) {
@@ -7292,9 +7345,9 @@ private fun AccountsSettings(
                 "Sign in to ARVIO Cloud to force sync"
             },
             actionLabel = if (isForceCloudSyncing) "SYNCING" else "SYNC",
-            isFocused = focusedIndex == 2,
+            isFocused = focusedIndex == 3,
             onClick = { if (!isForceCloudSyncing) onForceCloudSync() },
-            modifier = Modifier.settingsFocusSlot(2)
+            modifier = Modifier.settingsFocusSlot(3)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7316,11 +7369,11 @@ private fun AccountsSettings(
                 updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> "UPDATE"
                 else -> "CHECK"
             },
-            isFocused = focusedIndex == 3,
+            isFocused = focusedIndex == 4,
             onClick = {
                 if (updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) onInstallUpdate() else onCheckUpdates()
             },
-            modifier = Modifier.settingsFocusSlot(3)
+            modifier = Modifier.settingsFocusSlot(4)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -7329,9 +7382,9 @@ private fun AccountsSettings(
             title = "Privacy and data deletion",
             description = "Open privacy and ARVIO Cloud account deletion instructions",
             actionLabel = "OPEN",
-            isFocused = focusedIndex == 4,
+            isFocused = focusedIndex == 5,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(4)
+            modifier = Modifier.settingsFocusSlot(5)
         )
     }
 }
@@ -7937,11 +7990,8 @@ private fun InputModal(
     var lastFocusedFieldIndex by remember(title, fields.size) { mutableStateOf<Int?>(null) }
     val totalItems = fields.size + 3 // inputs + paste + cancel + confirm
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
-    val formMaxHeight = when {
-        fields.size >= 5 -> if (isTouchDevice) 360.dp else 390.dp
-        fields.size >= 4 -> if (isTouchDevice) 330.dp else 350.dp
-        else -> 290.dp
-    }
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
+    val maxDialogHeight = (screenHeightDp * 0.88f).coerceAtMost(if (isTouchDevice) 620.dp else 660.dp)
 
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -8005,13 +8055,16 @@ private fun InputModal(
 
     // Auto-scroll the form so the focused field stays in view when D-pad navigates.
     // Each field is ~86dp tall (label 22dp + spacer 6dp + edittext 48dp + spacing 12dp).
-    // Scroll proportionally so the active field sits roughly in the middle of the viewport.
+    // Scroll so the focused field stays in view. Distribute proportionally across the actual
+    // scroll range so the calculation works at any screen density and form height.
     LaunchedEffect(focusedIndex) {
         if (focusedIndex in 0 until fields.size) {
             lastFocusedFieldIndex = focusedIndex
-            val approxFieldHeightPx = 260 // rough pixels per field at typical density
-            val targetScroll = (focusedIndex * approxFieldHeightPx).coerceAtLeast(0)
-            runCatching { formScrollState.animateScrollTo(targetScroll) }
+            val maxScroll = formScrollState.maxValue
+            if (maxScroll > 0 && fields.size > 1) {
+                val targetScroll = (focusedIndex.toFloat() / (fields.size - 1) * maxScroll).toInt()
+                runCatching { formScrollState.animateScrollTo(targetScroll) }
+            }
         } else if (focusedIndex >= fields.size) {
             // Focused on paste/cancel/confirm — scroll form to end so it's not blocking
             runCatching { formScrollState.animateScrollTo(formScrollState.maxValue) }
@@ -8043,7 +8096,7 @@ private fun InputModal(
                     )
                     .navigationBarsPadding()
                     .imePadding()
-                    .heightIn(max = if (isTouchDevice) 620.dp else 660.dp)
+                    .heightIn(max = maxDialogHeight)
                     .background(BackgroundElevated, RoundedCornerShape(14.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
                     .padding(horizontal = if (isTouchDevice) 16.dp else 20.dp, vertical = 18.dp)
@@ -8140,7 +8193,7 @@ private fun InputModal(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = formMaxHeight)
+                        .weight(1f, fill = false)
                         .verticalScroll(formScrollState)
                 ) {
                     fields.forEachIndexed { index, field ->
@@ -8355,7 +8408,9 @@ private fun InputModal(
                     Text(
                         text = "Paste into $pasteTargetLabel",
                         style = ArflixTypography.button,
-                        color = if (isPasteFocused) Color.Black else Color.White
+                        color = if (isPasteFocused) Color.Black else Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -8774,8 +8829,18 @@ private fun IptvCategoriesSettings(
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val orderedGroups = remember(groupOrder, availableGroups, playlistId) {
-        val explicitOrder = groupOrder.map { com.arflix.tv.data.model.PlaylistGroupKey(it) }.filter { it.playlistId == playlistId }.map { it.groupName }
-        (explicitOrder + availableGroups).distinct()
+        orderedIptvGroups(
+            playlistId = playlistId,
+            availableGroups = availableGroups,
+            groupOrder = groupOrder
+        )
+    }
+    val categoryListState = rememberLazyListState()
+
+    LaunchedEffect(isMobile, focusedIndex, orderedGroups.size) {
+        if (!isMobile && focusedIndex > 0 && orderedGroups.isNotEmpty()) {
+            categoryListState.animateScrollToItem((focusedIndex - 1).coerceIn(0, orderedGroups.lastIndex))
+        }
     }
 
     Column {
@@ -8825,58 +8890,79 @@ private fun IptvCategoriesSettings(
                 }
             }
         } else {
-            orderedGroups.forEachIndexed { index, group ->
-                val rowFocusIndex = index + 1
-                val isRowFocused = focusedIndex == rowFocusIndex
-                val groupKey = com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, group)
-                val isHidden = hiddenGroups.contains(groupKey)
-                
-                Row(
+            if (orderedGroups.isEmpty()) {
+                Text(
+                    text = "No categories available",
+                    style = ArflixTypography.body,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(16.dp)
+                )
+            } else {
+                LazyColumn(
+                    state = categoryListState,
                     modifier = Modifier
-                        .settingsFocusSlot(rowFocusIndex)
                         .fillMaxWidth()
-                        .background(
-                            if (isRowFocused) Color.White.copy(alpha = 0.08f) 
-                            else Color.Transparent,
-                            RoundedCornerShape(12.dp)
-                        )
-                        .clickable { onToggleHidden(group) }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .heightIn(max = 560.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = group,
-                            style = ArflixTypography.body,
-                            color = if (isRowFocused) TextPrimary else TextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (isHidden) "Hidden" else "Visible",
-                            style = ArflixTypography.caption,
-                            color = TextSecondary.copy(alpha = 0.7f)
-                        )
-                    }
+                    itemsIndexed(
+                        items = orderedGroups,
+                        key = { _, group -> com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, group) }
+                    ) { index, group ->
+                        val rowFocusIndex = index + 1
+                        val isRowFocused = focusedIndex == rowFocusIndex
+                        val groupKey = com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, group)
+                        val isHidden = hiddenGroups.contains(groupKey)
 
-                    CatalogActionChip(
-                        icon = if (isHidden) Icons.Default.VisibilityOff else Icons.Default.Check,
-                        isFocused = isRowFocused && focusedActionIndex == 0,
-                        onClick = { onToggleHidden(group) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = Icons.Default.ArrowUpward,
-                        isFocused = isRowFocused && focusedActionIndex == 1,
-                        onClick = { onMoveUp(group) }
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    CatalogActionChip(
-                        icon = Icons.Default.ArrowDownward,
-                        isFocused = isRowFocused && focusedActionIndex == 2,
-                        onClick = { onMoveDown(group) }
-                    )
+                        Row(
+                            modifier = Modifier
+                                .settingsFocusSlot(rowFocusIndex)
+                                .fillMaxWidth()
+                                .background(
+                                    if (isRowFocused) Color.White.copy(alpha = 0.08f)
+                                    else Color.Transparent,
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .clickable { onToggleHidden(group) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = group,
+                                    style = ArflixTypography.body,
+                                    color = if (isRowFocused) TextPrimary else TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = if (isHidden) "Hidden" else "Visible",
+                                    style = ArflixTypography.caption,
+                                    color = TextSecondary.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            CatalogActionChip(
+                                icon = if (isHidden) Icons.Default.VisibilityOff else Icons.Default.Check,
+                                isFocused = isRowFocused && focusedActionIndex == 0,
+                                onClick = { onToggleHidden(group) }
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            CatalogActionChip(
+                                icon = Icons.Default.ArrowUpward,
+                                isFocused = isRowFocused && focusedActionIndex == 1,
+                                onClick = { onMoveUp(group) }
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            CatalogActionChip(
+                                icon = Icons.Default.ArrowDownward,
+                                isFocused = isRowFocused && focusedActionIndex == 2,
+                                onClick = { onMoveDown(group) }
+                            )
+                        }
+                    }
                 }
             }
         }

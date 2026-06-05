@@ -81,6 +81,14 @@ interface TmdbApi {
         @Query("api_key") apiKey: String,
         @Query("language") language: String? = null
     ): TmdbSeasonDetails
+
+    @GET("tv/{tv_id}/season/{season_number}/episode/{episode_number}/external_ids")
+    suspend fun getTvEpisodeExternalIds(
+        @Path("tv_id") tvId: Int,
+        @Path("season_number") seasonNumber: Int,
+        @Path("episode_number") episodeNumber: Int,
+        @Query("api_key") apiKey: String
+    ): TmdbExternalIds
     
     @GET("{media_type}/{id}/credits")
     suspend fun getCredits(
@@ -323,7 +331,7 @@ data class TmdbReviewsResponse(val id: Int = 0, val page: Int = 1, val results: 
 data class TmdbReview(val id: String = "", val author: String = "", @SerializedName("author_details") val authorDetails: TmdbAuthorDetails? = null, val content: String = "", @SerializedName("created_at") val createdAt: String = "", @SerializedName("updated_at") val updatedAt: String = "", val url: String = "")
 data class TmdbAuthorDetails(val name: String = "", val username: String = "", @SerializedName("avatar_path") val avatarPath: String? = null, val rating: Float? = null)
 data class TmdbFindResponse(@SerializedName("movie_results") val movieResults: List<TmdbFindItem> = emptyList(), @SerializedName("tv_results") val tvResults: List<TmdbFindItem> = emptyList())
-data class TmdbFindItem(val id: Int = 0, val popularity: Float = 0f)
+data class TmdbFindItem(val id: Int = 0, val popularity: Float = 0f, val title: String = "", val name: String = "")
 
 /** Response for /collection/{id} — the `parts` array contains the films in a franchise. */
 data class TmdbCollectionResponse(

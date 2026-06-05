@@ -3,6 +3,7 @@
 package com.arflix.tv.ui.screens.home
 
 import android.content.Context
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -120,6 +121,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import coil.ImageLoader
+import coil.imageLoader
 import coil.compose.AsyncImage
 import coil.decode.SvgDecoder
 import coil.request.ImageRequest
@@ -413,21 +415,7 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeSc
     }
 }
 
-@Composable
-private fun rememberMetadataLogoImageLoader(context: Context): ImageLoader {
-    return remember(context) {
-        ImageLoader.Builder(context)
-            .okHttpClient(OkHttpProvider.coilClient)
-            .components {
-                add(SvgDecoder.Factory())
-            }
-            .allowRgb565(false)
-            .crossfade(false)
-            .placeholder(android.R.color.transparent)
-            .error(android.R.color.transparent)
-            .build()
-    }
-}
+
 
 @Composable
 private fun HomeBackdropCrossfade(
@@ -1291,7 +1279,7 @@ private fun HeroSection(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val metadataLogoImageLoader = rememberMetadataLogoImageLoader(context)
+    val metadataLogoImageLoader = context.imageLoader
     val density = LocalDensity.current
     val logoSize = remember(density) {
         val widthPx = with(density) { 320.dp.roundToPx() }
@@ -1343,6 +1331,8 @@ private fun HeroSection(
                             val cacheKey = "$currentLogoUrl|${logoWidthPx}x$logoHeightPx"
                             ImageRequest.Builder(context)
                                 .data(currentLogoUrl)
+                                .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                .allowRgb565(false)
                                 .size(logoWidthPx, logoHeightPx)
                                 .precision(Precision.INEXACT)
                                 .allowHardware(true)
@@ -1539,8 +1529,15 @@ private fun HeroSection(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 if (primaryNetworkLogo != null) {
+                                    val networkLogoRequest = remember(primaryNetworkLogo, context) {
+                                        ImageRequest.Builder(context)
+                                            .data(primaryNetworkLogo)
+                                            .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                            .allowRgb565(false)
+                                            .build()
+                                    }
                                     AsyncImage(
-                                        model = primaryNetworkLogo,
+                                        model = networkLogoRequest,
                                         imageLoader = metadataLogoImageLoader,
                                         contentDescription = "Primary streaming provider",
                                         contentScale = ContentScale.Fit,
@@ -1749,7 +1746,7 @@ private fun MobileHeroOverlay(
     onDetails: () -> Unit
 ) {
     val context = LocalContext.current
-    val metadataLogoImageLoader = rememberMetadataLogoImageLoader(context)
+    val metadataLogoImageLoader = context.imageLoader
     val mobileHeroGradient = remember {
         Brush.verticalGradient(
             listOf(
@@ -2617,12 +2614,12 @@ private fun MobileHomeRowsLayer(
     onItemLongClick: ((MediaItem, Boolean) -> Unit)? = null,
     onCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> }
 ) {
-    val mobileItemSpacing = 10.dp
+    val mobileItemSpacing = 14.dp
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 80.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Hero carousel — profile/search row + banner card pager
         item(key = "mobile_hero", contentType = "mobile_hero") {
@@ -2646,7 +2643,7 @@ private fun MobileHomeRowsLayer(
             val isCollectionRow = category.id.startsWith("collection_row_")
             val rowKey = remember(category.id) { "home:${category.id}" }
             val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
-            val rowMobileItemWidth = if (rowUsePosterCards) 124.dp else 200.dp
+            val rowMobileItemWidth = if (rowUsePosterCards) 120.dp else 200.dp
             val rowState = rememberLazyListState()
 
             LaunchedEffect(rowState, category.id) {
@@ -2661,12 +2658,12 @@ private fun MobileHomeRowsLayer(
                     }
             }
 
-            Column(modifier = Modifier.padding(bottom = 8.dp)) {
+            Column(modifier = Modifier.padding(bottom = 0.dp)) {
                 // Section title
                 Row(
                     modifier = Modifier.padding(
                         start = contentStartPadding,
-                        bottom = 8.dp
+                        bottom = 4.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2734,6 +2731,15 @@ private fun MobileHomeRowsLayer(
                                 onLoadMoreCategory(category.id)
                             }
                         }
+                        val currentItem = rememberUpdatedState(item)
+                        val onCardClick = remember {
+                            { onItemClick(currentItem.value) }
+                        }
+                        val onCardLongClick = if (onItemLongClick != null) {
+                            remember {
+                                { onItemLongClick(currentItem.value, isContinueWatching) }
+                            }
+                        } else null
                         if (isRanked && index < 10) {
                             Box(
                                 modifier = Modifier.width(rowMobileItemWidth)
@@ -2750,8 +2756,8 @@ private fun MobileHomeRowsLayer(
                                     isFocusedOverride = false,
                                     enableSystemFocus = false,
                                     onFocused = {},
-                                    onClick = { onItemClick(item) },
-                                    onLongClick = onItemLongClick?.let { callback -> { callback(item, isContinueWatching) } },
+                                    onClick = onCardClick,
+                                    onLongClick = onCardLongClick,
                                 )
                                 TopRankRibbon(
                                     rank = index + 1,
@@ -2776,8 +2782,8 @@ private fun MobileHomeRowsLayer(
                                 isFocusedOverride = false,
                                 enableSystemFocus = false,
                                 onFocused = {},
-                                onClick = { onItemClick(item) },
-                                onLongClick = onItemLongClick?.let { callback -> { callback(item, isContinueWatching) } },
+                                onClick = onCardClick,
+                                onLongClick = onCardLongClick,
                             )
                         }
                     }
@@ -2854,9 +2860,9 @@ private fun TvHomeRowsLayer(
         rememberCatalogueRowLayoutMode("home:${category.id}") == CardLayoutMode.POSTER
     }
     val categoryHeightsPx = remember(renderedCategories, rowLayoutModes, density) {
-        renderedCategories.mapIndexed { idx, category ->
+        renderedCategories.mapIndexed { idx, _ ->
             val usePoster = rowLayoutModes.getOrNull(idx) ?: false
-            val heightDp = if (usePoster) 252.dp else 202.dp
+            val heightDp = if (usePoster) 245.dp else 202.dp
             with(density) { heightDp.toPx() }
         }
     }
@@ -2972,7 +2978,18 @@ private fun TvHomeRowsLayer(
                     val rowIsFocused = !focusState.isSidebarFocused && actualRowIndex == focusState.currentRowIndex
                     val rowKey = remember(category.id) { "home:${category.id}" }
                     val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
-                    val rowHeight = if (rowUsePosterCards) 252.dp else 202.dp
+                    val rowHeight = if (rowUsePosterCards) 245.dp else 202.dp
+                    val onRowLoadMore = remember(category.id) {
+                        { onLoadMoreCategory(category.id) }
+                    }
+                    val onRowItemFocused = remember(actualRowIndex) {
+                        { item: MediaItem, itemIdx: Int ->
+                            focusState.currentRowIndex = actualRowIndex
+                            focusState.currentItemIndex = itemIdx
+                            focusState.isSidebarFocused = false
+                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
+                        }
+                    }
                     Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2988,16 +3005,11 @@ private fun TvHomeRowsLayer(
                             startPadding = contentStartPadding,
                             categoryHasMore = categoryHasMoreMap[category.id] == true,
                             smoothScrolling = smoothScrolling,
-                            onLoadMore = { onLoadMoreCategory(category.id) },
+                            onLoadMore = onRowLoadMore,
                             focusedItemIndex = if (rowIsFocused) focusState.currentItemIndex else -1,
                             isFastScrolling = rowIsFocused && isFastScrolling,
                             onItemClick = onItemClick,
-                            onItemFocused = { item, itemIdx ->
-                                focusState.currentRowIndex = actualRowIndex
-                                focusState.currentItemIndex = itemIdx
-                                focusState.isSidebarFocused = false
-                                focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                            }
+                            onItemFocused = onRowItemFocused
                         )
                     }
                 }
@@ -3124,13 +3136,21 @@ private fun ImdbSvgRatingBadge(
     logoHeight: Dp,
     textShadow: Shadow
 ) {
+    val context = LocalContext.current
     val imdbLogoUri = remember { "android.resource://com.arvio.tv/${R.raw.logo_imdb_rectangle}" }
+    val request = remember(imdbLogoUri, context) {
+        ImageRequest.Builder(context)
+            .data(imdbLogoUri)
+            .bitmapConfig(Bitmap.Config.ARGB_8888)
+            .allowRgb565(false)
+            .build()
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         AsyncImage(
-            model = imdbLogoUri,
+            model = request,
             imageLoader = imageLoader,
             contentDescription = "IMDb",
             contentScale = ContentScale.Fit,
@@ -3218,7 +3238,7 @@ private fun ContentRow(
         usePosterCards
     }
     val cardAspectRatio = if (effectivePosterMode) 2f / 3f else 16f / 9f
-    val itemWidth = if (effectivePosterMode) 119.dp else 210.dp
+    val itemWidth = if (effectivePosterMode) 105.dp else 210.dp
     val itemSpacing = 14.dp
     val totalItems = category.items.size
     val maxFirstIndex = remember(totalItems) {
@@ -3323,7 +3343,7 @@ private fun ContentRow(
     ) {
         // Section title - clean white text, aligned with cards
         Row(
-            modifier = Modifier.padding(start = startPadding, bottom = 12.dp),
+            modifier = Modifier.padding(start = startPadding, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -3363,8 +3383,8 @@ private fun ContentRow(
                 contentPadding = PaddingValues(
                     start = startPadding,
                     end = railEndPadding,
-                    top = 14.dp,
-                    bottom = 14.dp
+                    top = 8.dp,
+                    bottom = 8.dp
                 ),
                 horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                 userScrollEnabled = false
@@ -3394,11 +3414,12 @@ private fun ContentRow(
                     }
                 }
                 val itemIsFocused = isCurrentRow && index == focusedCardIndex
-                val onCardFocused = remember(item, index) {
-                    { latestOnItemFocused.value(item, index) }
+                val currentItem = rememberUpdatedState(item)
+                val onCardFocused = remember(index) {
+                    { latestOnItemFocused.value(currentItem.value, index) }
                 }
-                val onCardClick = remember(item) {
-                    { latestOnItemClick.value(item) }
+                val onCardClick = remember {
+                    { latestOnItemClick.value(currentItem.value) }
                 }
                 if (isRanked && index < 10) {
                     // Top 10 rows should use the SAME card sizing as every other row.
@@ -3464,7 +3485,7 @@ private fun ContentRow(
             if (railFocusOverlayActive) {
                 ArvioFocusableSurface(
                     modifier = Modifier
-                        .padding(start = startPadding, top = 14.dp)
+                        .padding(start = startPadding, top = 8.dp)
                         .width(itemWidth)
                         .aspectRatio(cardAspectRatio)
                         .zIndex(4f),

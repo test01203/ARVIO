@@ -44,7 +44,8 @@ data class IptvProgram(
     val title: String,
     val description: String? = null,
     val startUtcMillis: Long,
-    val endUtcMillis: Long
+    val endUtcMillis: Long,
+    val catchupAvailable: Boolean? = null
 ) {
     fun isLive(atUtcMillis: Long): Boolean = atUtcMillis in startUtcMillis until endUtcMillis
     fun startsInMinutes(atUtcMillis: Long): Long = ((startUtcMillis - atUtcMillis) / 60_000L).coerceAtLeast(0L)

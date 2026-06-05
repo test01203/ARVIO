@@ -234,7 +234,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -477,7 +476,7 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     gson.fromJson<List<QualityFilterConfig>>(
                         json,
-                        object : TypeToken<List<QualityFilterConfig>>() {}.type
+                        TypeToken.getParameterized(List::class.java, QualityFilterConfig::class.java).type
                     ).orEmpty()
                 }
             }.getOrDefault(emptyList())
@@ -674,11 +673,16 @@ class SettingsViewModel @Inject constructor(
         if (playlistId != null) {
             viewModelScope.launch {
                 val snapshot = iptvRepository.getMemoryCachedSnapshot()
-                val groups = snapshot?.channels
-                    ?.filter { it.id.startsWith("$playlistId:") }
-                    ?.map { it.group.trim().ifBlank { "Ungrouped" } }
-                    ?.distinct()
-                    .orEmpty()
+                    ?: iptvRepository.getCachedSnapshotOrNull()
+                val groups = withContext(Dispatchers.Default) {
+                    snapshot?.channels
+                        ?.asSequence()
+                        ?.filter { it.id.startsWith("$playlistId:") }
+                        ?.map { it.group.trim().ifBlank { "Ungrouped" } }
+                        ?.distinct()
+                        ?.toList()
+                        .orEmpty()
+                }
                 _uiState.value = _uiState.value.copy(iptvAvailableGroups = groups)
             }
         } else {
