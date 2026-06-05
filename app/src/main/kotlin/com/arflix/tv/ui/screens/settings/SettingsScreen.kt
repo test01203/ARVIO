@@ -3341,15 +3341,17 @@ private fun MobileSettingsMainPage(
 
         item {
             MobileSettingsCategory(title = "CATEGORIES") {
-                val categories = listOf(
-                    "Playback & Controls" to Icons.Default.PlayArrow,
-                    "Audio & Subtitles" to Icons.Default.Speaker,
-                    "Appearance" to Icons.Default.Palette,
-                    "Plugins & Extensions" to Icons.Default.Extension,
-                    "Catalogs" to Icons.Default.Widgets,
-                    "TV" to Icons.Default.LiveTv,
-                    "Home Server" to Icons.Default.Cloud
-                )
+                val categories = buildList {
+                    add("Playback & Controls" to Icons.Default.PlayArrow)
+                    add("Audio & Subtitles" to Icons.Default.Speaker)
+                    add("Appearance" to Icons.Default.Palette)
+                    if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
+                        add("Plugins & Extensions" to Icons.Default.Extension)
+                    }
+                    add("Catalogs" to Icons.Default.Widgets)
+                    add("TV" to Icons.Default.LiveTv)
+                    add("Home Server" to Icons.Default.Cloud)
+                }
                 categories.forEachIndexed { index, (name, icon) ->
                     Column {
                         Row(
@@ -8968,4 +8970,3 @@ private fun IptvCategoriesSettings(
         }
     }
 }
-

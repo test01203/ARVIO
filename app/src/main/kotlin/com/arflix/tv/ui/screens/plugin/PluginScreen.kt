@@ -77,7 +77,7 @@ fun PluginScreen(
                 Text("Add Repository", color = Color.White, style = MaterialTheme.typography.titleMedium)
             }
         }
-        
+
         Spacer(modifier = Modifier.height(24.dp))
 
         if (uiState.repositories.isNotEmpty()) {
@@ -102,14 +102,14 @@ fun PluginScreen(
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
-        
+
         Text("Installed Scrapers", color = Color.White, style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         if (uiState.scrapers.isEmpty()) {
             Text("No scrapers installed.", color = Color.Gray)
         }
-        
+
         if (uiState.scrapers.isNotEmpty()) {
             uiState.scrapers.forEach { scraper ->
                 // Make the entire row focusable and clickable
@@ -124,7 +124,7 @@ fun PluginScreen(
                 ) {
                     Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(scraper.name, color = Color.White, modifier = Modifier.weight(1f))
-                        
+
                         // Custom TV-safe Switch visualization (doesn't trap focus itself)
                         Box(
                             modifier = Modifier
@@ -148,15 +148,15 @@ fun PluginScreen(
             }
         }
     }
-    
+
     if (showAddDialog) {
         AddRepoDialog(
-            onSave = { url -> 
+            onSave = { url ->
                 viewModel.onEvent(PluginUiEvent.AddRepository(url))
                 showAddDialog = false
                 try { addButtonFocusRequester.requestFocus() } catch (e: Exception) {}
             },
-            onDismiss = { 
+            onDismiss = {
                 showAddDialog = false
                 try { addButtonFocusRequester.requestFocus() } catch (e: Exception) {}
             }
@@ -172,12 +172,12 @@ fun AddRepoDialog(
     var value by remember { mutableStateOf("") }
     val inputFocusRequester = remember { FocusRequester() }
     val saveFocusRequester = remember { FocusRequester() }
-    
+
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(200)
         try { inputFocusRequester.requestFocus() } catch (_: Exception) {}
     }
-    
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -209,7 +209,7 @@ fun AddRepoDialog(
                 Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
                     Text("Add Plugin Repository", style = MaterialTheme.typography.titleLarge, color = Color.White)
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     androidx.compose.material3.OutlinedTextField(
                         value = value,
                         onValueChange = { value = it },
@@ -225,9 +225,9 @@ fun AddRepoDialog(
                             unfocusedLabelColor = Color.Gray
                         )
                     )
-                    
+
                     Spacer(modifier = Modifier.height(24.dp))
-                    
+
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Surface(
                             onClick = onDismiss,
@@ -245,7 +245,7 @@ fun AddRepoDialog(
                                 color = Color.White
                             )
                         }
-                        
+
                         Surface(
                             onClick = { onSave(value) },
                             modifier = Modifier.weight(1f).focusRequester(saveFocusRequester),

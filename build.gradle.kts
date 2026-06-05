@@ -18,8 +18,3 @@ plugins {
     // Static analysis
     id("io.gitlab.arturbosch.detekt") version "1.23.7" apply false
 }
-
-
-
-
-

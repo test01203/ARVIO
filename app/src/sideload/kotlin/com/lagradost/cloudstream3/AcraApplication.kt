@@ -6,7 +6,7 @@ import java.lang.ref.WeakReference
 
 object AcraApplication {
     var context: Context? = null
-    
+
     private var currentActivity: WeakReference<Activity>? = null
 
     fun setActivity(activity: Activity?) {
@@ -17,4 +17,3 @@ object AcraApplication {
         return currentActivity?.get()
     }
 }
-
