@@ -291,7 +291,7 @@ class HomeServerRepository @Inject constructor(
                 }
 
                 require(trimmedUsername.isNotBlank()) { "Enter a username" }
-                val auth = authenticate(serverUrl, trimmedUsername, password)
+                val auth = authenticate(serverUrl, trimmedUsername, password, detectedKind)
                 val connectionShell = HomeServerConnection(
                     enabled = true,
                     connectionId = createConnectionId(serverUrl, detectedKind, auth.userId.ifBlank { trimmedUsername }),
@@ -841,17 +841,25 @@ class HomeServerRepository @Inject constructor(
             ?: "https://app.plex.tv/auth"
     }
 
-    private fun requestBuilder(url: String, connection: HomeServerConnection? = null): Request.Builder {
+    private fun requestBuilder(
+        url: String,
+        connection: HomeServerConnection? = null,
+        serverKind: HomeServerKind? = connection?.serverKind
+    ): Request.Builder {
         val builder = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
             .header("User-Agent", "ARVIO/${BuildConfig.VERSION_NAME}")
-        if (connection?.serverKind == HomeServerKind.PLEX) {
+        val kind = serverKind ?: connection?.serverKind
+        if (kind == HomeServerKind.PLEX && connection != null) {
             plexHeaders(connection.accessToken).forEach { (key, value) -> builder.header(key, value) }
         } else {
-            builder.header("X-Emby-Authorization", authHeader(connection?.accessToken))
-            if (connection != null) {
-                builder.header("X-Emby-Token", connection.accessToken)
+            builder.header("Authorization", authHeader(connection?.accessToken))
+            if (kind == HomeServerKind.EMBY) {
+                builder.header("X-Emby-Authorization", authHeader(connection?.accessToken))
+                connection?.accessToken?.takeIf { it.isNotBlank() }?.let { token ->
+                    builder.header("X-Emby-Token", token)
+                }
             }
         }
         return builder
@@ -859,11 +867,14 @@ class HomeServerRepository @Inject constructor(
 
     private fun playbackHeaders(connection: HomeServerConnection): Map<String, String> {
         if (connection.serverKind == HomeServerKind.PLEX) return plexHeaders(connection.accessToken)
-        return mapOf(
-            "User-Agent" to "ARVIO/${BuildConfig.VERSION_NAME}",
-            "X-Emby-Authorization" to authHeader(connection.accessToken),
-            "X-Emby-Token" to connection.accessToken
-        )
+        return buildMap {
+            put("User-Agent", "ARVIO/${BuildConfig.VERSION_NAME}")
+            put("Authorization", authHeader(connection.accessToken))
+            if (connection.serverKind == HomeServerKind.EMBY) {
+                put("X-Emby-Authorization", authHeader(connection.accessToken))
+                put("X-Emby-Token", connection.accessToken)
+            }
+        }
     }
 
     private fun buildUrl(
@@ -926,8 +937,13 @@ class HomeServerRepository @Inject constructor(
         }
     }
 
-    private fun postJson(url: String, bodyJson: JsonObject, connection: HomeServerConnection? = null): JsonObject {
-        val request = requestBuilder(url, connection)
+    private fun postJson(
+        url: String,
+        bodyJson: JsonObject,
+        connection: HomeServerConnection? = null,
+        serverKind: HomeServerKind? = connection?.serverKind
+    ): JsonObject {
+        val request = requestBuilder(url, connection, serverKind)
             .post(gson.toJson(bodyJson).toRequestBody(jsonMediaType))
             .header("Content-Type", "application/json")
             .build()
@@ -981,13 +997,18 @@ class HomeServerRepository @Inject constructor(
         )
     }
 
-    private fun authenticate(serverUrl: String, username: String, password: String): AuthResponse {
+    private fun authenticate(
+        serverUrl: String,
+        username: String,
+        password: String,
+        serverKind: HomeServerKind
+    ): AuthResponse {
         val body = JsonObject().apply {
             addProperty("Username", username)
             addProperty("Pw", password)
             addProperty("Password", password)
         }
-        val response = postJson(buildUrl(serverUrl, "/Users/AuthenticateByName"), body)
+        val response = postJson(buildUrl(serverUrl, "/Users/AuthenticateByName"), body, serverKind = serverKind)
         val user = response.obj("User")
         return AuthResponse(
             accessToken = response.string("AccessToken"),
@@ -1926,8 +1947,13 @@ class HomeServerRepository @Inject constructor(
             val parsed = absolute.toHttpUrlOrNull() ?: return absolute
             return parsed.newBuilder()
                 .apply {
-                    if (parsed.queryParameter("api_key").isNullOrBlank()) {
-                        addQueryParameter("api_key", connection.accessToken)
+                    if (connection.serverKind == HomeServerKind.EMBY) {
+                        if (parsed.queryParameter("api_key").isNullOrBlank()) {
+                            addQueryParameter("api_key", connection.accessToken)
+                        }
+                    } else {
+                        removeAllQueryParameters("api_key")
+                        removeAllQueryParameters("apiKey")
                     }
                 }
                 .build()
@@ -1943,7 +1969,7 @@ class HomeServerRepository @Inject constructor(
                 "Static" to "true",
                 "MediaSourceId" to id,
                 "DeviceId" to deviceId(),
-                "api_key" to connection.accessToken,
+                "api_key" to connection.accessToken.takeIf { connection.serverKind == HomeServerKind.EMBY },
                 "Tag" to eTag.takeIf { it.isNotBlank() }
             )
         )
