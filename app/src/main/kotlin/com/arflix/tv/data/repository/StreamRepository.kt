@@ -77,12 +77,14 @@ internal fun buildEpisodeIdCandidates(
     seriesId: String,
     animeQuery: String?,
     tmdbEpisodeId: String?,
-    preferNativeAnimeIds: Boolean
+    preferNativeAnimeIds: Boolean,
+    includeTmdbCandidate: Boolean = true
 ): List<EpisodeIdCandidate> {
     val animeCandidate = animeQuery
         ?.takeIf { it.isNotBlank() && it != seriesId }
         ?.let { EpisodeIdCandidate(it, "kitsu", preferAnimePath = true) }
     val tmdbCandidate = tmdbEpisodeId
+        ?.takeIf { includeTmdbCandidate }
         ?.takeIf { it.isNotBlank() && it != seriesId && it != animeQuery }
         ?.let { EpisodeIdCandidate(it, "tmdb", preferAnimePath = true) }
     val imdbCandidate = EpisodeIdCandidate(seriesId, "imdb", preferAnimePath = false)
@@ -94,6 +96,17 @@ internal fun buildEpisodeIdCandidates(
     }
 
     return ordered.distinctBy { "${it.contentId}|${it.preferAnimePath}" }
+}
+
+internal fun shouldTryNativeAnimeFallback(
+    genreIds: List<Int>,
+    originalLanguage: String?,
+    nativeAnimeAddonAvailable: Boolean
+): Boolean {
+    if (!nativeAnimeAddonAvailable) return false
+    if (!genreIds.contains(16)) return false // TMDB Animation genre
+    val language = originalLanguage?.trim()?.lowercase(Locale.US)
+    return language.isNullOrBlank() || language == "ja"
 }
 
 /**
@@ -1213,10 +1226,19 @@ class StreamRepository @Inject constructor(
         addons: List<Addon>,
         imdbId: String,
         tmdbId: Int?,
-        isAnime: Boolean
+        isAnime: Boolean,
+        genreIds: List<Int>,
+        originalLanguage: String?
     ): List<Addon> {
         val seriesAddons = getStreamAddons(addons, "series", imdbId)
-        if (!isAnime) return seriesAddons
+        val hasNativeAnimeAddon = addons.any(::shouldPreferNativeAnimeIds)
+        val shouldIncludeAnimeAddons = isAnime ||
+            shouldTryNativeAnimeFallback(
+                genreIds = genreIds,
+                originalLanguage = originalLanguage,
+                nativeAnimeAddonAvailable = hasNativeAnimeAddon
+            )
+        if (!shouldIncludeAnimeAddons) return seriesAddons
 
         val animeIds = buildList {
             add(imdbId)
@@ -1459,8 +1481,15 @@ class StreamRepository @Inject constructor(
                 }
                 val (baseUrl, queryParams) = getAddonBaseUrl(addon.url ?: return@withTimeout emptyList())
 
-                val isAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
-                val animeQuery = if (isAnime) {
+                val strictAnime = animeMapper.isAnimeContent(tmdbId, genreIds, originalLanguage)
+                val nativeAnimeAddon = shouldPreferNativeAnimeIds(addon)
+                val resolveAsAnime = strictAnime ||
+                    shouldTryNativeAnimeFallback(
+                        genreIds = genreIds,
+                        originalLanguage = originalLanguage,
+                        nativeAnimeAddonAvailable = nativeAnimeAddon
+                    )
+                val animeQuery = if (resolveAsAnime) {
                     withTimeoutOrNull(3_000L) {
                         animeMapper.resolveAnimeEpisodeQuery(
                             tmdbId = tmdbId,
@@ -1480,8 +1509,8 @@ class StreamRepository @Inject constructor(
                     addon.url.contains("mediafusion") ||
                     addon.url.contains("comet")
 
-                val useKitsuFallback = isAnime && supportsKitsu && animeQuery != null && animeQuery != seriesId
-                val preferNativeAnimeIds = isAnime && useKitsuFallback && shouldPreferNativeAnimeIds(addon)
+                val useKitsuFallback = resolveAsAnime && supportsKitsu && animeQuery != null && animeQuery != seriesId
+                val preferNativeAnimeIds = useKitsuFallback && nativeAnimeAddon
                 fun streamUrl(type: String, contentId: String): String {
                     return if (queryParams != null) {
                         "$baseUrl/stream/$type/$contentId.json?$queryParams"
@@ -1556,7 +1585,7 @@ class StreamRepository @Inject constructor(
                     return emptyList()
                 }
 
-                val tmdbEpisodeId = if (isAnime && tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
+                val tmdbEpisodeId = if (resolveAsAnime && tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
                     "tmdb:$tmdbId:$season:$episode"
                 } else null
 
@@ -1565,7 +1594,8 @@ class StreamRepository @Inject constructor(
                     seriesId = seriesId,
                     animeQuery = if (useKitsuFallback) animeQuery else null,
                     tmdbEpisodeId = tmdbEpisodeId,
-                    preferNativeAnimeIds = preferNativeAnimeIds
+                    preferNativeAnimeIds = preferNativeAnimeIds,
+                    includeTmdbCandidate = !nativeAnimeAddon
                 )) {
                     addonStreams = requestEpisodeId(
                         contentId = candidate.contentId,
@@ -2053,7 +2083,9 @@ class StreamRepository @Inject constructor(
             addons = allAddons,
             imdbId = imdbId,
             tmdbId = tmdbId,
-            isAnime = isAnime
+            isAnime = isAnime,
+            genreIds = genreIds,
+            originalLanguage = originalLanguage
         )
         val cacheKey = streamCacheKey(
             profileId = profileManager.getProfileIdSync(),
@@ -2119,7 +2151,9 @@ class StreamRepository @Inject constructor(
                 addons = allAddons,
                 imdbId = imdbId,
                 tmdbId = tmdbId,
-                isAnime = isAnime
+                isAnime = isAnime,
+                genreIds = genreIds,
+                originalLanguage = originalLanguage
             )
             val cacheKey = streamCacheKey(
                 profileId = profileManager.getProfileIdSync(),
