@@ -147,10 +147,10 @@ fun StreamSelector(
     data class SourceFilter(val label: String)
     val sourceFilters = remember {
         listOf(
-            SourceFilter("Recommended"),
+            SourceFilter("All"),
             SourceFilter("4K"),
             SourceFilter("1080p"),
-            SourceFilter("Cached"),
+            SourceFilter("Ready"),
             SourceFilter("Debrid"),
             SourceFilter("Direct")
         )
@@ -215,7 +215,7 @@ fun StreamSelector(
 
     // Filter streams by selected tab
     val filteredPresentations = remember(sortedPresentations, selectedTabIndex, selectedFilterIndex, addonTabs) {
-        val selectedFilter = sourceFilters.getOrNull(selectedFilterIndex)?.label ?: "Recommended"
+        val selectedFilter = sourceFilters.getOrNull(selectedFilterIndex)?.label ?: "All"
         val addonFiltered = if (selectedTabIndex == 0) {
             sortedPresentations // All sources
         } else {
@@ -240,10 +240,25 @@ fun StreamSelector(
     val flatPresentations = filteredPresentations
     val flatStreams = flatPresentations.map { it.stream }
 
-    // Scroll to focused item
-    LaunchedEffect(focusedIndex) {
+    // Keep D-pad movement calm: only scroll when focus moves past the visible buffer.
+    LaunchedEffect(focusedIndex, flatStreams.size) {
         if (flatStreams.isNotEmpty() && focusedIndex < flatStreams.size) {
-            listState.animateScrollToItem(focusedIndex)
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) {
+                listState.scrollToItem((focusedIndex - 1).coerceAtLeast(0))
+            } else {
+                val firstVisible = visibleItems.first().index
+                val lastVisible = visibleItems.last().index
+                val visibleCount = (lastVisible - firstVisible + 1).coerceAtLeast(1)
+                val targetIndex = when {
+                    focusedIndex < firstVisible -> focusedIndex.coerceAtLeast(0)
+                    focusedIndex > lastVisible - 1 -> (focusedIndex - visibleCount + 2).coerceAtLeast(0)
+                    else -> null
+                }
+                if (targetIndex != null) {
+                    listState.scrollToItem(targetIndex)
+                }
+            }
         }
     }
 
@@ -262,6 +277,9 @@ fun StreamSelector(
     }
     val count1080 = remember(streams) {
         streams.count { it.quality.contains("1080p", ignoreCase = true) }
+    }
+    val countReady = remember(presentations) {
+        presentations.count { it.sortCached }
     }
 
     AnimatedVisibility(
@@ -384,6 +402,7 @@ fun StreamSelector(
                     streamsFocused = focusZone == "streams",
                     count4K = count4K,
                     count1080 = count1080,
+                    countReady = countReady,
                     isLoading = isLoading,
                     hasStreamingAddons = hasStreamingAddons,
                     completedAddons = completedAddons,
@@ -602,6 +621,7 @@ private fun OledSourceSelectorTv(
     streamsFocused: Boolean,
     count4K: Int,
     count1080: Int,
+    countReady: Int,
     isLoading: Boolean,
     hasStreamingAddons: Boolean,
     completedAddons: Int,
@@ -610,12 +630,20 @@ private fun OledSourceSelectorTv(
     onAddonSelected: (Int) -> Unit,
     onSelect: (StreamSource) -> Unit
 ) {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = 34.dp, top = 30.dp, end = 30.dp, bottom = 28.dp),
-        horizontalArrangement = Arrangement.spacedBy(22.dp)
+            .padding(start = 30.dp, top = 26.dp, end = 30.dp, bottom = 24.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color.White.copy(alpha = 0.032f), RoundedCornerShape(24.dp))
+            .border(1.dp, OledMutedBorder, RoundedCornerShape(24.dp))
     ) {
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(start = 20.dp, top = 18.dp, end = 18.dp, bottom = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -629,7 +657,7 @@ private fun OledSourceSelectorTv(
                     Text(
                         text = stringResource(R.string.sources),
                         style = ArflixTypography.body.copy(
-                            fontSize = 28.sp,
+                            fontSize = 24.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = TextPrimary,
@@ -658,7 +686,7 @@ private fun OledSourceSelectorTv(
                         Text(
                             text = title,
                             style = ArflixTypography.body.copy(
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold
                             ),
                             color = TextPrimary.copy(alpha = 0.9f),
@@ -678,7 +706,7 @@ private fun OledSourceSelectorTv(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier
@@ -697,7 +725,7 @@ private fun OledSourceSelectorTv(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             when {
                 streams.isEmpty() -> SourceEmptyState(
@@ -715,8 +743,8 @@ private fun OledSourceSelectorTv(
                 )
                 else -> TvLazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(bottom = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .arvioDpadFocusGroup()
@@ -735,6 +763,13 @@ private fun OledSourceSelectorTv(
             }
         }
 
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(Color.White.copy(alpha = 0.07f))
+        )
+
         SourceAddonRail(
             tabLabels = tabLabels,
             selectedTabIndex = selectedTabIndex,
@@ -743,10 +778,12 @@ private fun OledSourceSelectorTv(
             totalSources = streams.size,
             count4K = count4K,
             count1080 = count1080,
+            countReady = countReady,
             completedAddons = completedAddons,
             totalAddons = totalAddons,
             onSelect = onAddonSelected
         )
+        }
     }
 }
 
@@ -816,6 +853,39 @@ private fun sourceTabId(stream: StreamSource): String {
     }
 }
 
+private fun isDebridLikeSource(stream: StreamSource, blob: String? = null): Boolean {
+    val addonName = stream.addonName
+    val text = blob ?: buildString {
+        append(stream.source)
+        append(' ')
+        append(stream.quality)
+        append(' ')
+        append(stream.addonName)
+        append(' ')
+        append(stream.behaviorHints?.filename.orEmpty())
+        append(' ')
+        append(stream.url.orEmpty())
+    }
+    return addonName.contains("torbox", ignoreCase = true) ||
+        addonName.contains("torrentio tb", ignoreCase = true) ||
+        addonName.contains("torrentio rd", ignoreCase = true) ||
+        addonName.contains("torrentio pm", ignoreCase = true) ||
+        addonName.contains("torrentio ad", ignoreCase = true) ||
+        text.contains("debrid", ignoreCase = true) ||
+        text.contains("real-debrid", ignoreCase = true) ||
+        text.contains("realdebrid", ignoreCase = true) ||
+        text.contains("premiumize", ignoreCase = true) ||
+        text.contains("alldebrid", ignoreCase = true) ||
+        text.contains(" RD+", ignoreCase = true) ||
+        text.contains("[RD+]", ignoreCase = true) ||
+        text.contains(" TB+", ignoreCase = true) ||
+        text.contains("[TB+]", ignoreCase = true) ||
+        text.contains("torbox", ignoreCase = true)
+}
+
+private fun isReadySource(stream: StreamSource, blob: String? = null): Boolean =
+    stream.behaviorHints?.cached == true || isDebridLikeSource(stream, blob)
+
 private fun sourceFilterMatches(presentation: SourcePresentation, selectedFilter: String): Boolean {
     val stream = presentation.stream
     val blob = buildString {
@@ -832,13 +902,8 @@ private fun sourceFilterMatches(presentation: SourcePresentation, selectedFilter
     return when (selectedFilter) {
         "4K" -> presentation.resolutionLabel == "4K"
         "1080p" -> presentation.resolutionLabel == "1080p"
-        "Cached" -> presentation.sortCached
-        "Debrid" -> presentation.sortCached ||
-            blob.contains("debrid", ignoreCase = true) ||
-            blob.contains("real-debrid", ignoreCase = true) ||
-            blob.contains("realdebrid", ignoreCase = true) ||
-            blob.contains("premiumize", ignoreCase = true) ||
-            blob.contains("alldebrid", ignoreCase = true)
+        "Ready", "Cached" -> isReadySource(stream, blob)
+        "Debrid" -> isDebridLikeSource(stream, blob)
         "Direct" -> presentation.sortDirect
         else -> true
     }
@@ -890,6 +955,8 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         append(stream.quality)
         append(' ')
         append(stream.source)
+        append(' ')
+        append(stream.addonName)
         append(' ')
         append(stream.behaviorHints?.filename.orEmpty())
     }
@@ -962,9 +1029,12 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
 
     val hasDirectHttpUrl = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true)
     val isIptvVod = stream.addonId == "iptv_xtream_vod" || addonLower.contains("iptv vod")
+    val isDebridReady = isDebridLikeSource(stream, searchBlob)
+    val isReady = stream.behaviorHints?.cached == true || isDebridReady
 
     val transportLabel = when {
         stream.behaviorHints?.cached == true -> "Cached"
+        isDebridReady -> "Debrid"
         !stream.infoHash.isNullOrBlank() || stream.sources.isNotEmpty() || isTorrentProvider -> "Torrent"
         isIptvVod && hasDirectHttpUrl -> "VOD"
         else -> null
@@ -1022,13 +1092,12 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         chips = chips.distinct(),
         qualityColor = qualityColor,
         sizeBytes = getSizeBytes(stream),
-        sortCached = stream.behaviorHints?.cached == true,
+        sortCached = isReady,
         sortDirect = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true),
         description = cleanStreamDescription(stream.description, rawTitle),
         detailRows = sourceDetailRows(
             stream = stream,
             rawTitle = rawTitle,
-            cleanTitle = title,
             addonLabel = addonLabel,
             releaseLabel = releaseLabel,
             codecLabel = codecLabel,
@@ -1074,7 +1143,6 @@ private fun cleanAddonDetailText(raw: String?, rawTitle: String): String? {
 private fun sourceDetailRows(
     stream: StreamSource,
     rawTitle: String,
-    cleanTitle: String,
     addonLabel: String,
     releaseLabel: String?,
     codecLabel: String?,
@@ -1095,11 +1163,9 @@ private fun sourceDetailRows(
     return buildList {
         add(SourceDetailRow("Addon", addonLabel))
         if (technical.isNotBlank()) add(SourceDetailRow("Details", technical))
+        add(SourceDetailRow("File", rawTitle))
         cleanAddonDetailText(stream.description, rawTitle)?.let {
             add(SourceDetailRow("Addon text", it))
-        }
-        if (!rawTitle.equals(cleanTitle, ignoreCase = true)) {
-            add(SourceDetailRow("Original", rawTitle))
         }
         if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) {
             add(SourceDetailRow("Type", "Magnet link"))
@@ -1118,12 +1184,12 @@ private fun StreamSource.multiSourceCountLabel(): String? = when {
 
 private fun sourceBadges(presentation: SourcePresentation): List<String> = buildList {
     add(presentation.resolutionLabel)
+    presentation.transportLabel?.let(::add)
     presentation.releaseLabel?.let(::add)
     presentation.codecLabel?.let(::add)
     if (presentation.chips.any { it.equals("HDR", ignoreCase = true) }) add("HDR")
     if (presentation.chips.any { it.equals("DV", ignoreCase = true) }) add("DV")
     presentation.audioLabel?.let(::add)
-    presentation.transportLabel?.let(::add)
     if (presentation.stream.size.isNotBlank()) add(presentation.stream.size)
 }.distinct()
 
@@ -1293,25 +1359,30 @@ private fun SourceFilterChip(
             .clip(RoundedCornerShape(999.dp))
             .background(
                 when {
-                    isFocused || isSelected -> Color.White
+                    isFocused -> Color.White
+                    isSelected -> Color.White.copy(alpha = 0.12f)
                     else -> OledPanel
                 }
             )
             .border(
                 1.dp,
-                if (isFocused || isSelected) Color.White else OledMutedBorder,
+                when {
+                    isFocused -> Color.White
+                    isSelected -> Color.White.copy(alpha = 0.28f)
+                    else -> OledMutedBorder
+                },
                 RoundedCornerShape(999.dp)
             )
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         Text(
             text = text,
             style = ArflixTypography.caption.copy(
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = if (isSelected || isFocused) FontWeight.Bold else FontWeight.SemiBold
             ),
-            color = if (isSelected || isFocused) Color.Black else TextPrimary.copy(alpha = 0.82f),
+            color = if (isFocused) Color.Black else TextPrimary.copy(alpha = if (isSelected) 0.96f else 0.82f),
             maxLines = 1
         )
     }
@@ -1327,18 +1398,16 @@ private fun SourceAddonRail(
     totalSources: Int,
     count4K: Int,
     count1080: Int,
+    countReady: Int,
     completedAddons: Int,
     totalAddons: Int,
     onSelect: (Int) -> Unit
 ) {
     Column(
         modifier = Modifier
-            .width(248.dp)
+            .width(218.dp)
             .fillMaxHeight()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.035f), RoundedCornerShape(18.dp))
-            .border(1.dp, OledMutedBorder, RoundedCornerShape(18.dp))
-            .padding(14.dp)
+            .padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
     ) {
         Text(
             text = "ADDONS",
@@ -1350,7 +1419,7 @@ private fun SourceAddonRail(
             color = OledMutedText
         )
         Spacer(modifier = Modifier.height(10.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             tabLabels.take(9).forEachIndexed { index, label ->
                 AddonRailItem(
                     text = label,
@@ -1363,6 +1432,7 @@ private fun SourceAddonRail(
         Spacer(modifier = Modifier.weight(1f))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             RailMetric(label = "Total", value = totalSources.toString())
+            RailMetric(label = "Ready", value = countReady.toString())
             RailMetric(label = "4K", value = count4K.toString())
             RailMetric(label = "1080p", value = count1080.toString())
             if (totalAddons > 0) {
@@ -1520,25 +1590,25 @@ private fun OledSourceRow(
                 shape = RoundedCornerShape(15.dp)
             )
             .clickable { onClick() }
-            .padding(14.dp)
+            .padding(horizontal = 11.dp, vertical = 7.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ProviderMark(presentation.addonLabel, isFocused)
-            Spacer(modifier = Modifier.width(13.dp))
+            Spacer(modifier = Modifier.width(11.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = presentation.title,
                         style = ArflixTypography.body.copy(
-                            fontSize = 14.sp,
-                            lineHeight = 18.sp,
+                            fontSize = 13.sp,
+                            lineHeight = 16.sp,
                             fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold
                         ),
                         color = TextPrimary,
-                        maxLines = 1,
+                        maxLines = if (isFocused) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
@@ -1552,17 +1622,17 @@ private fun OledSourceRow(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = rowSubtitle(presentation),
-                    style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                    style = ArflixTypography.caption.copy(fontSize = 9.sp),
                     color = OledMutedText,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(modifier = Modifier.width(14.dp))
-            OledBadgeRow(presentation = presentation, maxBadges = 5)
+            Spacer(modifier = Modifier.width(8.dp))
+            OledBadgeRow(presentation = presentation, maxBadges = 4)
         }
 
         AnimatedVisibility(
@@ -1579,22 +1649,22 @@ private fun OledSourceRow(
 private fun ProviderMark(addonLabel: String, isFocused: Boolean) {
     Box(
         modifier = Modifier
-            .size(42.dp)
+            .size(34.dp)
             .background(
                 if (isFocused) Color.White else Color.White.copy(alpha = 0.08f),
-                RoundedCornerShape(12.dp)
+                RoundedCornerShape(10.dp)
             )
             .border(
                 1.dp,
                 if (isFocused) Color.White else OledMutedBorder,
-                RoundedCornerShape(12.dp)
+                RoundedCornerShape(10.dp)
             ),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = addonInitials(addonLabel),
             style = ArflixTypography.caption.copy(
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Black
             ),
             color = if (isFocused) Color.Black else TextPrimary
@@ -1608,11 +1678,16 @@ private fun OledBadgeRow(
     maxBadges: Int
 ) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         sourceBadges(presentation).take(maxBadges).forEach { badge ->
-            OledBadge(text = badge, strong = badge == "Cached" || badge == presentation.resolutionLabel)
+            OledBadge(
+                text = badge,
+                strong = badge == "Cached" ||
+                    badge == "Debrid" ||
+                    badge == presentation.resolutionLabel
+            )
         }
     }
 }
@@ -1622,20 +1697,20 @@ private fun OledBadge(text: String, strong: Boolean = false) {
     Box(
         modifier = Modifier
             .background(
-                if (strong) Color.White else Color.White.copy(alpha = 0.06f),
-                RoundedCornerShape(7.dp)
+                if (strong) Color.White else Color.White.copy(alpha = 0.055f),
+                RoundedCornerShape(6.dp)
             )
             .border(
                 1.dp,
                 if (strong) Color.White else OledMutedBorder,
-                RoundedCornerShape(7.dp)
+                RoundedCornerShape(6.dp)
             )
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 7.dp, vertical = 3.dp)
     ) {
         Text(
             text = text,
             style = ArflixTypography.caption.copy(
-                fontSize = 10.sp,
+                fontSize = 9.sp,
                 fontWeight = FontWeight.Bold
             ),
             color = if (strong) Color.Black else TextPrimary.copy(alpha = 0.82f),
@@ -1648,22 +1723,13 @@ private fun OledBadge(text: String, strong: Boolean = false) {
 private fun AddonDetailsPanel(presentation: SourcePresentation) {
     Column(
         modifier = Modifier
-            .padding(top = 13.dp, start = 55.dp)
+            .padding(top = 7.dp, start = 45.dp)
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
-            .border(1.dp, OledMutedBorder, RoundedCornerShape(12.dp))
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+            .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        Text(
-            text = "ADDON DETAILS",
-            style = ArflixTypography.caption.copy(
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            ),
-            color = OledMutedText
-        )
         presentation.detailRows.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1671,16 +1737,20 @@ private fun AddonDetailsPanel(presentation: SourcePresentation) {
             ) {
                 Text(
                     text = row.label,
-                    style = ArflixTypography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                    style = ArflixTypography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
                     color = OledMutedText,
-                    modifier = Modifier.width(92.dp),
+                    modifier = Modifier.width(68.dp),
                     maxLines = 1
                 )
                 Text(
                     text = row.value,
-                    style = ArflixTypography.caption.copy(fontSize = 11.sp, lineHeight = 15.sp),
-                    color = TextPrimary.copy(alpha = 0.86f),
-                    maxLines = if (row.label == "Original" || row.label == "Addon text") 2 else 1,
+                    style = ArflixTypography.caption.copy(fontSize = 10.sp, lineHeight = 13.sp),
+                    color = TextPrimary.copy(alpha = 0.84f),
+                    maxLines = when (row.label) {
+                        "File" -> 3
+                        "Addon text" -> 2
+                        else -> 1
+                    },
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
