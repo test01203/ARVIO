@@ -280,4 +280,6 @@
     <string name="plugin_risky_enable_message">This plugin may be risky.</string>
     <string name="plugin_risky_enable_cancel">Cancel</string>
     <string name="plugin_risky_enable_confirm">Enable</string>
+    <string name="plugin_prefix">Plugin: </string>
+    <string name="plugins_loading">Plugins: %1$s</string>
 </resources>

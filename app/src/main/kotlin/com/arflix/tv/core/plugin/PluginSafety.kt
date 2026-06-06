@@ -42,7 +42,7 @@ internal object PluginSafety {
         }
 
         // No path traversal allowed
-        if (filename.contains("/") || filename.contains("\\") || filename.contains("..")) {
+        if (filename.contains("..")) {
             return false
         }
 

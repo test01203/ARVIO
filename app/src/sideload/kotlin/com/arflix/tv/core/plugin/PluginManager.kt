@@ -682,7 +682,7 @@ class PluginManager @Inject constructor(
         mediaType: String,
         season: Int? = null,
         episode: Int? = null
-    ): Flow<Pair<ScraperInfo, List<LocalScraperResult>>> = channelFlow {
+    ): Flow<Pair<ScraperInfo, List<LocalScraperResult>?>> = channelFlow {
         val enabledList = enabledScrapers.first()
             .filter { it.supportsType(mediaType) }
 
@@ -705,10 +705,11 @@ class PluginManager @Inject constructor(
         enabledList.forEach { scraper ->
             launch {
                 try {
+                    send(scraper to null)
                     val results = executeScraperWithSingleFlight(scraper, tmdbId, mediaType, season, episode)
                     send(scraper to results)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Scraper ${scraper.name} failed in streaming: ${e.message}")
+                    Log.w(TAG, "Scraper ${scraper.id} streaming failed: ${e.message}")
                     send(scraper to emptyList())
                 }
             }
