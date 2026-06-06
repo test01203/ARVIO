@@ -294,6 +294,7 @@ fun SettingsScreen(
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
 
     // Auto-start cloud auth if requested (e.g. from profile selection page)
     LaunchedEffect(autoStartCloudAuth) {
@@ -670,7 +671,18 @@ fun SettingsScreen(
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
                     } ?: false
-                    when (event.key) {
+                    
+                    val isRtl = isRtlLayoutDirection
+                    val actualKey = event.key
+                    val logicalKey = if (isRtl) {
+                        when (actualKey) {
+                            Key.DirectionLeft -> Key.DirectionRight
+                            Key.DirectionRight -> Key.DirectionLeft
+                            else -> actualKey
+                        }
+                    } else actualKey
+
+                    when (logicalKey) {
                         Key.Back, Key.Escape -> {
                             when (activeZone) {
                                 Zone.SIDEBAR -> onBack()
