@@ -239,7 +239,6 @@ fun StreamSelector(
     // Flatten for navigation
     val flatPresentations = filteredPresentations
     val flatStreams = flatPresentations.map { it.stream }
-    val bestPresentation = flatPresentations.firstOrNull()
 
     // Scroll to focused item
     LaunchedEffect(focusedIndex) {
@@ -371,7 +370,6 @@ fun StreamSelector(
                     subtitle = subtitle,
                     streams = streams,
                     flatPresentations = flatPresentations,
-                    bestPresentation = bestPresentation,
                     selectedStream = selectedStream,
                     sourceFilters = sourceFilters.map { it.label },
                     selectedFilterIndex = selectedFilterIndex,
@@ -590,7 +588,6 @@ private fun OledSourceSelectorTv(
     subtitle: String,
     streams: List<StreamSource>,
     flatPresentations: List<SourcePresentation>,
-    bestPresentation: SourcePresentation?,
     selectedStream: StreamSource?,
     sourceFilters: List<String>,
     selectedFilterIndex: Int,
@@ -682,14 +679,6 @@ private fun OledSourceSelectorTv(
             }
 
             Spacer(modifier = Modifier.height(18.dp))
-
-            bestPresentation?.let { presentation ->
-                BestMatchStrip(
-                    presentation = presentation,
-                    onClick = { onSelect(presentation.stream) }
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-            }
 
             Row(
                 modifier = Modifier
@@ -1508,15 +1497,10 @@ private fun OledSourceRow(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.012f else 1f,
-        animationSpec = tween(130),
-        label = "sourceRowScale"
-    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .scale(scale)
+            .padding(horizontal = 3.dp, vertical = 1.dp)
             .clip(RoundedCornerShape(15.dp))
             .background(
                 when {
