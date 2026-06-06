@@ -118,6 +118,7 @@ fun StreamSelector(
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
 ) {
+    val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     var focusedIndex by remember { mutableIntStateOf(0) }
     var focusedTabIndex by remember { mutableIntStateOf(0) }
     var selectedTabIndex by remember { mutableIntStateOf(0) }
@@ -279,7 +280,17 @@ fun StreamSelector(
                 .background(Color.Black.copy(alpha = 0.95f))
                 .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
-                        when (event.key) {
+                        val isRtl = isRtlLayoutDirection
+                        val actualKey = event.key
+                        val logicalKey = if (isRtl) {
+                            when (actualKey) {
+                                Key.DirectionLeft -> Key.DirectionRight
+                                Key.DirectionRight -> Key.DirectionLeft
+                                else -> actualKey
+                            }
+                        } else actualKey
+
+                        when (logicalKey) {
                             Key.Back, Key.Escape -> {
                                 onClose()
                                 true
