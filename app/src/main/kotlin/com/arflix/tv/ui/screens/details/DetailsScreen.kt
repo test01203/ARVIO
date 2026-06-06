@@ -1884,8 +1884,13 @@ private fun DetailsContent(
                 val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
                 val rating = imdbRatingFor(item)
                 val ratingValue = parseRatingValue(rating)
+                val hasRatingMetadata = ratingValue > 0f
                 val primaryNetworkLogo = item.primaryNetworkLogo?.takeIf { it.isNotBlank() }
                 val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
+                val hasBudgetMetadata = !budgetText.isNullOrBlank()
+                val hasSecondaryMetadata = primaryNetworkLogo != null ||
+                    hasRatingMetadata ||
+                    hasBudgetMetadata
                 val overviewMaxHeight = if (isCompactHeight) 68.dp else 72.dp
 
                 val separatorStyle = ArflixTypography.caption.copy(
@@ -1893,89 +1898,116 @@ private fun DetailsContent(
                     shadow = textShadow
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.width(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Text(
-                        text = genreText,
-                        style = ArflixTypography.caption.copy(
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            shadow = textShadow
-                        ),
-                        color = Color.White
-                    )
-
-                    if (displayDate.isNotEmpty()) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
-                            text = displayDate,
+                            text = genreText,
                             style = ArflixTypography.caption.copy(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 shadow = textShadow
                             ),
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
-                    }
 
-                    if (hasDuration) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        Text(
-                            text = item.duration,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
-                    }
-
-                    if (primaryNetworkLogo != null) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        val networkLogoRequest = remember(primaryNetworkLogo, context) {
-                            ImageRequest.Builder(context)
-                                .data(primaryNetworkLogo)
-                                .bitmapConfig(Bitmap.Config.ARGB_8888)
-                                .allowRgb565(false)
-                                .build()
+                        if (displayDate.isNotEmpty()) {
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                            Text(
+                                text = displayDate,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
+                            )
                         }
-                        AsyncImage(
-                            model = networkLogoRequest,
-                            imageLoader = metadataLogoImageLoader,
-                            contentDescription = "Primary streaming provider",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .height(16.dp)
-                                .width(52.dp)
-                        )
+
+                        if (hasDuration) {
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                            Text(
+                                text = item.duration,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                        }
                     }
 
-                    if (ratingValue > 0f) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        DetailsImdbSvgRatingBadge(
-                            rating = rating,
-                            imageLoader = metadataLogoImageLoader,
-                            ratingFontSize = 13,
-                            logoWidth = 34.dp,
-                            logoHeight = 14.dp,
-                            textShadow = textShadow
-                        )
-                    }
+                    if (hasSecondaryMetadata) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (primaryNetworkLogo != null) {
+                                val networkLogoRequest = remember(primaryNetworkLogo, context) {
+                                    ImageRequest.Builder(context)
+                                        .data(primaryNetworkLogo)
+                                        .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                        .allowRgb565(false)
+                                        .build()
+                                }
+                                AsyncImage(
+                                    model = networkLogoRequest,
+                                    imageLoader = metadataLogoImageLoader,
+                                    contentDescription = "Primary streaming provider",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(16.dp)
+                                        .width(52.dp)
+                                )
 
-                    if (!budgetText.isNullOrBlank()) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        Text(
-                            text = "${stringResource(R.string.budget)} $budgetText",
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
+                                if (hasRatingMetadata || hasBudgetMetadata) {
+                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
+                                }
+                            }
+
+                            if (hasRatingMetadata) {
+                                DetailsImdbSvgRatingBadge(
+                                    rating = rating,
+                                    imageLoader = metadataLogoImageLoader,
+                                    ratingFontSize = 13,
+                                    logoWidth = 34.dp,
+                                    logoHeight = 14.dp,
+                                    textShadow = textShadow
+                                )
+
+                                if (hasBudgetMetadata) {
+                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
+                                }
+                            }
+
+                            if (hasBudgetMetadata) {
+                                Text(
+                                    text = "${stringResource(R.string.budget)} $budgetText",
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White.copy(alpha = 0.74f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                        }
                     }
                 }
 
