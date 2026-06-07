@@ -173,7 +173,22 @@ fun ProfileSelectionScreen(
             val avatarSize = if (isTouchDevice) 90.dp else 120.dp
             val avatarSpacing = if (isTouchDevice) 16.dp else 24.dp
 
-            if (isTouchDevice) {
+            if (uiState.isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(avatarSize),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.loading_profile),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.72f),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else if (isTouchDevice) {
                 // Mobile: use LazyRow so profiles scroll horizontally on small screens
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),

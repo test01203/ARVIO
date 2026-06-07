@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.ProfileColors
 import com.arflix.tv.data.repository.CloudSyncRepository
+import com.arflix.tv.data.repository.AuthRepository
+import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileAvatarImageManager
 import com.arflix.tv.data.repository.ProfileRepository
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 data class ProfileUiState(
@@ -54,6 +57,7 @@ data class ProfileUiState(
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
+    private val authRepository: AuthRepository,
     private val profileRepository: ProfileRepository,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
@@ -66,10 +70,12 @@ class ProfileViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(ProfileUiState())
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
+    private var lastInitialRestoreUserId: String? = null
 
     init {
         loadProfiles()
         observeProfiles()
+        restoreCloudProfilesForFreshLogin()
     }
 
     private fun loadProfiles() {
@@ -88,12 +94,59 @@ class ProfileViewModel @Inject constructor(
     private fun observeProfiles() {
         viewModelScope.launch {
             profileRepository.profiles.collect { profiles ->
-                _uiState.value = _uiState.value.copy(profiles = profiles)
+                _uiState.value = _uiState.value.copy(
+                    profiles = profiles,
+                    isLoading = _uiState.value.isLoading && profiles.isEmpty()
+                )
             }
         }
         viewModelScope.launch {
             profileRepository.activeProfile.collect { profile ->
                 _uiState.value = _uiState.value.copy(activeProfile = profile)
+            }
+        }
+    }
+
+    private fun restoreCloudProfilesForFreshLogin() {
+        viewModelScope.launch {
+            authRepository.authState.collect { state ->
+                if (state !is AuthState.Authenticated) {
+                    lastInitialRestoreUserId = null
+                    if (_uiState.value.isLoading) {
+                        loadProfiles()
+                    }
+                    return@collect
+                }
+
+                val userId = state.userId
+                if (lastInitialRestoreUserId == userId || profileRepository.getProfiles().isNotEmpty()) {
+                    return@collect
+                }
+
+                lastInitialRestoreUserId = userId
+                _uiState.value = _uiState.value.copy(isLoading = true)
+
+                var restoreResult = withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(18_000L) {
+                        cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false)
+                    } ?: CloudSyncRepository.RestoreResult.FAILED
+                }
+                if (restoreResult == CloudSyncRepository.RestoreResult.FAILED) {
+                    delay(1_200L)
+                    restoreResult = withContext(Dispatchers.IO) {
+                        withTimeoutOrNull(18_000L) {
+                            cloudSyncRepository.pullFromCloud(pushPendingLocalFirst = false)
+                        } ?: CloudSyncRepository.RestoreResult.FAILED
+                    }
+                }
+
+                val profiles = profileRepository.getProfiles()
+                val activeProfile = profileRepository.getActiveProfile()
+                _uiState.value = _uiState.value.copy(
+                    profiles = profiles,
+                    activeProfile = activeProfile,
+                    isLoading = false
+                )
             }
         }
     }

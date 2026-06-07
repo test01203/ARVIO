@@ -282,4 +282,9 @@
     <string name="plugin_risky_enable_confirm">Enable</string>
     <string name="plugin_prefix">Plugin: </string>
     <string name="plugins_loading">Plugins: %1$s</string>
+
+    <!-- IPTV / Live TV Quick Zap Navigation -->
+    <string name="select_category">Select Category</string>
+    <string name="channel_categories">Channel Categories</string>
+    <string name="channel_guide">Channel Guide</string>
 </resources>

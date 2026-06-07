@@ -1,10 +1,12 @@
 package com.arflix.tv.data.repository
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.data.model.Addon
+import com.arflix.tv.data.model.AddonType
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.ContinueWatchingItem
@@ -36,6 +38,37 @@ import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
 
+internal fun mergeCloudAddonsPreservingLocalDirectAddons(
+    cloudAddons: List<Addon>,
+    localAddons: List<Addon>
+): Pair<List<Addon>, Boolean> {
+    val merged = LinkedHashMap<String, Addon>()
+    cloudAddons.forEach { addon ->
+        val id = addon.id.trim()
+        if (id.isNotBlank()) {
+            merged[id] = addon
+        }
+    }
+
+    var preservedLocalAddon = false
+    localAddons.forEach { addon ->
+        val id = addon.id.trim()
+        val shouldPreserve = id.isNotBlank() &&
+            id !in merged &&
+            id != "opensubtitles" &&
+            addon.isInstalled &&
+            addon.type == AddonType.CUSTOM &&
+            !addon.url.isNullOrBlank()
+
+        if (shouldPreserve) {
+            merged[id] = addon
+            preservedLocalAddon = true
+        }
+    }
+
+    return merged.values.toList() to preservedLocalAddon
+}
+
 /**
  * Shared cloud sync logic used by both SettingsViewModel (full push/pull on
  * Settings screen) and ProfileViewModel (pull on profile selection).
@@ -60,6 +93,7 @@ class CloudSyncRepository @Inject constructor(
     private val profileAvatarImageManager: ProfileAvatarImageManager,
     private val invalidationBus: CloudSyncInvalidationBus
 ) {
+    private val TAG = "CloudSync"
     private val gson = Gson()
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cloudSyncLocalDirtyAtKey = longPreferencesKey("cloud_sync_local_dirty_at")
@@ -75,6 +109,31 @@ class CloudSyncRepository @Inject constructor(
         payload.length < 100_000 -> "lt_100kb"
         payload.length < 1_000_000 -> "lt_1mb"
         else -> "gte_1mb"
+    }
+
+    private fun cloudPayloadProfileCount(payload: String): Int? {
+        if (payload.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(payload)
+            if (!root.has("profiles")) null else root.optJSONArray("profiles")?.length() ?: 0
+        }.getOrNull()
+    }
+
+    private fun hasMeaningfulLocalProfiles(profiles: List<Profile>): Boolean {
+        if (profiles.isEmpty()) return false
+        if (profiles.size > 1) return true
+
+        val profile = profiles.first()
+        return !profile.name.equals("Profile 1", ignoreCase = true) ||
+            profile.avatarId != 0 ||
+            profile.avatarImageVersion > 0L ||
+            profile.isKidsProfile ||
+            profile.isLocked ||
+            !profile.pin.isNullOrBlank()
+    }
+
+    suspend fun hasMeaningfulLocalProfiles(): Boolean {
+        return hasMeaningfulLocalProfiles(profileRepository.getProfiles())
     }
 
     private fun mergeAddonsForSharedRestore(addonLists: Iterable<List<Addon>>): List<Addon> {
@@ -150,7 +209,15 @@ class CloudSyncRepository @Inject constructor(
         }
     }
 
-    private suspend fun hasPendingLocalChanges(): Boolean {
+    private suspend fun clearStaleLocalDirtyBeforeRemoteRestore() {
+        latestLocalDirtyAt = 0L
+        isPushDirty = false
+        context.settingsDataStore.edit { prefs ->
+            prefs.remove(cloudSyncLocalDirtyAtKey)
+        }
+    }
+
+    suspend fun hasPendingLocalChanges(): Boolean {
         val storedDirtyAt = context.settingsDataStore.data.first()[cloudSyncLocalDirtyAtKey] ?: 0L
         if (storedDirtyAt > 0L) {
             latestLocalDirtyAt = max(latestLocalDirtyAt, storedDirtyAt)
@@ -616,6 +683,7 @@ class CloudSyncRepository @Inject constructor(
             clearLocalDirtyAfterSuccessfulPush()
             lastPushedPayloadHash = payloadHash
             pushFailureCount = 0
+            Log.i(TAG, "Push succeeded size=${payloadSizeBucket(payload)}")
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "push_success size=${payloadSizeBucket(payload)}",
@@ -628,6 +696,10 @@ class CloudSyncRepository @Inject constructor(
             // cloud state until the user explicitly changes another setting.
             markPushFailedDirty()
             pushFailureCount++
+            Log.w(
+                TAG,
+                "Push failed size=${payloadSizeBucket(payload)} failures=$pushFailureCount error=${result.exceptionOrNull()?.message}"
+            )
             AppLogger.recordException(
                 throwable = result.exceptionOrNull() ?: IllegalStateException("Cloud push failed"),
                 context = mapOf(
@@ -650,8 +722,9 @@ class CloudSyncRepository @Inject constructor(
      * Restores the full cloud state to local repositories.
      * Returns [RestoreResult] indicating what happened.
      */
-    suspend fun pullFromCloud(): RestoreResult = cloudSyncMutex.withLock {
-        if (hasPendingLocalChanges()) {
+    suspend fun pullFromCloud(pushPendingLocalFirst: Boolean = true): RestoreResult = cloudSyncMutex.withLock {
+        val hasPendingLocalChanges = hasPendingLocalChanges()
+        if (pushPendingLocalFirst && hasPendingLocalChanges) {
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "pull_pushes_pending_local_first",
@@ -668,6 +741,12 @@ class CloudSyncRepository @Inject constructor(
                 )
                 return@withLock RestoreResult.FAILED
             }
+        } else if (!pushPendingLocalFirst && hasPendingLocalChanges) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_remote_first_skips_pending_local_push",
+                severity = "info"
+            )
         }
 
         val payloadResult = authRepository.loadAccountSyncPayload()
@@ -684,10 +763,54 @@ class CloudSyncRepository @Inject constructor(
 
         val payload = payloadResult.getOrNull().orEmpty()
         if (payload.isBlank()) {
+            Log.i(TAG, "Pull found no cloud backup")
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "pull_no_backup",
                 severity = "info"
+            )
+            return@withLock RestoreResult.NO_BACKUP
+        }
+
+        val cloudProfileCount = cloudPayloadProfileCount(payload)
+        if (!pushPendingLocalFirst && cloudProfileCount != null && cloudProfileCount <= 0) {
+            val localProfiles = profileRepository.getProfiles()
+            if (hasMeaningfulLocalProfiles(localProfiles)) {
+                AppLogger.breadcrumb(
+                    tag = "CloudSync",
+                    message = "pull_remote_profiles_empty_seed_local local_profiles=${localProfiles.size}",
+                    severity = "warning"
+                )
+                val pushResult = pushToCloudLocked()
+                return@withLock if (pushResult.isSuccess) RestoreResult.RESTORED else RestoreResult.FAILED
+            }
+
+            Log.i(TAG, "Pull found cloud backup without usable profiles")
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_remote_profiles_empty_no_restore local_profiles=${localProfiles.size}",
+                severity = "warning"
+            )
+            return@withLock RestoreResult.NO_BACKUP
+        }
+
+        if (!pushPendingLocalFirst && cloudProfileCount == null) {
+            val localProfiles = profileRepository.getProfiles()
+            if (hasMeaningfulLocalProfiles(localProfiles)) {
+                AppLogger.breadcrumb(
+                    tag = "CloudSync",
+                    message = "pull_remote_profiles_missing_seed_local local_profiles=${localProfiles.size}",
+                    severity = "warning"
+                )
+                val pushResult = pushToCloudLocked()
+                return@withLock if (pushResult.isSuccess) RestoreResult.RESTORED else RestoreResult.FAILED
+            }
+
+            Log.i(TAG, "Pull found legacy cloud backup without profile list")
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_remote_profiles_missing_no_restore local_profiles=${localProfiles.size}",
+                severity = "warning"
             )
             return@withLock RestoreResult.NO_BACKUP
         }
@@ -697,6 +820,7 @@ class CloudSyncRepository @Inject constructor(
         val payloadHash = payload.hashCode()
 
         if (lastAppliedHash == payloadHash) {
+            Log.i(TAG, "Pull skipped identical payload")
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "pull_skipped_identical_payload",
@@ -707,11 +831,15 @@ class CloudSyncRepository @Inject constructor(
 
         runCatching {
             invalidationBus.suppressDuringRemoteApply {
+                if (!pushPendingLocalFirst) {
+                    clearStaleLocalDirtyBeforeRemoteRestore()
+                }
                 applyCloudPayload(payload)
             }
             markCloudPayloadApplied(payload, payloadHash)
         }.fold(
             onSuccess = {
+                Log.i(TAG, "Pull restored size=${payloadSizeBucket(payload)}")
                 AppLogger.breadcrumb(
                     tag = "CloudSync",
                     message = "pull_restored size=${payloadSizeBucket(payload)}",
@@ -720,6 +848,7 @@ class CloudSyncRepository @Inject constructor(
                 RestoreResult.RESTORED
             },
             onFailure = { e ->
+                Log.w(TAG, "Pull failed size=${payloadSizeBucket(payload)} error=${e.message}")
                 System.err.println("[CLOUD-SYNC] pullFromCloud failed: ${e.message}")
                 AppLogger.recordException(
                     throwable = e,
@@ -1008,22 +1137,32 @@ class CloudSyncRepository @Inject constructor(
 
         // ── Addons ──
         runCatching {
+            var preservedLocalAddon = false
             root.optJSONObject("addonsByProfile")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, TypeToken.getParameterized(List::class.java, Addon::class.java).type).type
                 val map: Map<String, List<Addon>> = gson.fromJson(json, type) ?: emptyMap()
                 val sharedAddons = mergeAddonsForSharedRestore(map.values)
-                if (sharedAddons.isNotEmpty()) {
-                    streamRepository.replaceSharedAddonsFromCloud(sharedAddons)
+                val localAddons = streamRepository.installedAddons.first()
+                val (resolvedAddons, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(sharedAddons, localAddons)
+                preservedLocalAddon = preservedLocalAddon || preserved
+                if (resolvedAddons.isNotEmpty()) {
+                    streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
                 }
             }
             root.optJSONArray("addons")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
                 if (!root.has("addonsByProfile")) {
                     val type = TypeToken.getParameterized(List::class.java, Addon::class.java).type
                     val addons: List<Addon> = gson.fromJson(json, type) ?: emptyList()
-                    if (addons.isNotEmpty()) {
-                        streamRepository.replaceSharedAddonsFromCloud(addons)
+                    val localAddons = streamRepository.installedAddons.first()
+                    val (resolvedAddons, preserved) = mergeCloudAddonsPreservingLocalDirectAddons(addons, localAddons)
+                    preservedLocalAddon = preservedLocalAddon || preserved
+                    if (resolvedAddons.isNotEmpty()) {
+                        streamRepository.replaceSharedAddonsFromCloud(resolvedAddons)
                     }
                 }
+            }
+            if (preservedLocalAddon) {
+                markLocalStateDirty()
             }
         }.onFailure { AppLogger.recordException(it, mapOf("error_area" to "CloudSync", "cloud_flow" to "apply_addons")) }
 

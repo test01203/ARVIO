@@ -282,6 +282,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     autoStartCloudAuth: Boolean = false,
+    initialSection: String? = null,
     onNavigateToHome: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
@@ -295,6 +296,30 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+
+    val sections = remember {
+        buildList {
+            add("accounts")
+            add("profiles")
+            add("playback")
+            add("language")
+            add("subtitles")
+            add("ai_subtitles")
+            add("iptv")
+            add("stremio")
+            add("catalogs")
+            add("home_server")
+            if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
+                add("plugins")
+            }
+            add("appearance")
+            add("network")
+        }
+    }
+
+    val initialSectionIdx = remember(initialSection, sections) {
+        initialSection?.let { sections.indexOf(it) }?.takeIf { it >= 0 }
+    }
 
     // Auto-start cloud auth if requested (e.g. from profile selection page)
     LaunchedEffect(autoStartCloudAuth) {
@@ -311,8 +336,12 @@ fun SettingsScreen(
     val hasProfile = currentProfile != null
     val maxSidebarIndex = topBarMaxIndex(hasProfile)
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 5 else 4) } // SETTINGS
-    var sectionIndex by remember { mutableIntStateOf(0) }
-    var mobilePage by remember { mutableStateOf("MAIN") }
+    var sectionIndex by remember { mutableIntStateOf(initialSectionIdx ?: 0) }
+    var mobilePage by remember {
+        mutableStateOf(
+            if (initialSection == "iptv") "TV" else "MAIN"
+        )
+    }
     var contentFocusIndex by remember { mutableIntStateOf(0) }
     var activeZone by remember { mutableStateOf(Zone.CONTENT) }
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
@@ -374,25 +403,6 @@ fun SettingsScreen(
 
     val stremioAddons = remember(uiState.addons) {
         uiState.addons.filter { it.runtimeKind == RuntimeKind.STREMIO }
-    }
-    val sections = remember {
-        buildList {
-            add("accounts")
-            add("profiles")
-            add("playback")
-            add("language")
-            add("subtitles")
-            add("ai_subtitles")
-            add("iptv")
-            add("stremio")
-            add("catalogs")
-            add("home_server")
-            if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
-                add("plugins")
-            }
-            add("appearance")
-            add("network")
-        }
     }
     val sectionMaxIndex: (String) -> Int = { section ->
         when (section) {

@@ -4,10 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -26,8 +24,9 @@ class CloudSyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.i(TAG, "Executing background cloud sync recovery")
 
-        // If not dirty, nothing to do
-        if (!cloudSyncRepository.isPushDirty) {
+        // If not dirty, nothing to do. Check persisted state too because the
+        // process may have restarted after the local change was queued.
+        if (!cloudSyncRepository.hasPendingLocalChanges()) {
             Log.i(TAG, "Cloud state is not dirty. Skipping sync.")
             return Result.success()
         }
@@ -52,12 +51,7 @@ class CloudSyncWorker @AssistedInject constructor(
         private const val WORK_NAME = "CloudSyncRecoveryWork"
 
         fun enqueueRecovery(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
             val request = OneTimeWorkRequestBuilder<CloudSyncWorker>()
-                .setConstraints(constraints)
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
                     androidx.work.WorkRequest.MIN_BACKOFF_MILLIS,
