@@ -1343,7 +1343,7 @@ private fun BestMatchStrip(
             }
             Spacer(modifier = Modifier.height(5.dp))
             Text(
-                text = "${presentation.addonLabel} - ${presentation.title}",
+                text = "${presentation.addonLabel} - ${presentation.rawTitle}",
                 style = ArflixTypography.body.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
                 color = TextPrimary,
                 maxLines = 1,
@@ -1605,14 +1605,14 @@ private fun OledSourceRow(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (isFocused) presentation.rawTitle else presentation.title,
+                        text = presentation.rawTitle,
                         style = ArflixTypography.body.copy(
-                            fontSize = if (isFocused) 12.sp else 13.sp,
+                            fontSize = 12.sp,
                             lineHeight = 15.sp,
                             fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold
                         ),
                         color = TextPrimary,
-                        maxLines = if (isFocused) 2 else 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
@@ -2015,7 +2015,7 @@ private fun GlassyStreamCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = presentation.title,
+                        text = presentation.rawTitle,
                         style = ArflixTypography.body.copy(
                             fontSize = 13.sp,
                             fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
