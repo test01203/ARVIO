@@ -65,4 +65,39 @@ class AuthRepositoryPayloadSelectionTest {
                 accountSyncPayloadRestoreRank(emptyPhoneSnapshot)
         )
     }
+
+    @Test
+    fun `three profile fallback snapshot outranks newer single configured account sync snapshot`() {
+        val newerAccountSyncSnapshot = """
+            {
+              "profiles": [
+                {"id":"43452392-8300-4643-8139-9d614c3aaaa7","name":"usua","avatarId":0}
+              ],
+              "activeProfileId":"43452392-8300-4643-8139-9d614c3aaaa7",
+              "profileSettingsById": {"43452392-8300-4643-8139-9d614c3aaaa7":{}},
+              "addonsByProfile": {"43452392-8300-4643-8139-9d614c3aaaa7":[{"id":"torrentio"}]},
+              "iptvByProfile": {"43452392-8300-4643-8139-9d614c3aaaa7":{"playlists":[{"name":"Main"}]}},
+              "updatedAt": 999999
+            }
+        """.trimIndent()
+        val olderUserSettingsSnapshot = """
+            {
+              "profiles": [
+                {"id":"1cea44ee-1bf3-4de5-9615-6660cdcc6e6d","name":"New","avatarId":1},
+                {"id":"shai","name":"Shai","avatarId":2},
+                {"id":"leyla","name":"Leyla","avatarId":3}
+              ],
+              "activeProfileId":"1cea44ee-1bf3-4de5-9615-6660cdcc6e6d",
+              "profileSettingsById": {"1cea44ee-1bf3-4de5-9615-6660cdcc6e6d":{},"shai":{},"leyla":{}},
+              "addonsByProfile": {"1cea44ee-1bf3-4de5-9615-6660cdcc6e6d":[],"shai":[],"leyla":[]},
+              "iptvByProfile": {"1cea44ee-1bf3-4de5-9615-6660cdcc6e6d":{},"shai":{},"leyla":{}},
+              "updatedAt": 1000
+            }
+        """.trimIndent()
+
+        assertTrue(
+            accountSyncPayloadRestoreRank(olderUserSettingsSnapshot) >
+                accountSyncPayloadRestoreRank(newerAccountSyncSnapshot)
+        )
+    }
 }

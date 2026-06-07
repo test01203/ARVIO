@@ -110,6 +110,7 @@ private data class ProfileAccountSyncUpdate(
 )
 
 private data class AccountSyncPayloadCandidate(
+    val source: String,
     val payload: String,
     val updatedAtMillis: Long
 )
@@ -135,6 +136,8 @@ internal fun accountSyncPayloadRestoreRank(payload: String): Int {
 
     return when {
         profileCount != null && profileCount <= 0 -> 0
+        profileCount != null && profileCount > 1 && hasFullSnapshotShape -> 80
+        profileCount != null && profileCount > 1 -> 70
         (hasUsefulProfiles || hasConfiguredState) && hasFullSnapshotShape -> 50
         hasUsefulProfiles || hasConfiguredState -> 40
         profileCount == null && hasFullSnapshotShape -> 30
@@ -284,6 +287,9 @@ class AuthRepository @Inject constructor(
     private val PROFILE_SYNC_PAYLOAD_KEY = "__arvioAccountSyncPayload"
     private val PROFILE_SYNC_UPDATED_AT_KEY = "__arvioAccountSyncUpdatedAt"
     private val PROFILE_SYNC_LEGACY_ADDONS_KEY = "__arvioLegacyAddons"
+    private val ACCOUNT_SYNC_SOURCE_PRIMARY = "account_sync_state"
+    private val ACCOUNT_SYNC_SOURCE_USER_SETTINGS = "user_settings"
+    private val ACCOUNT_SYNC_SOURCE_PROFILE_ADDONS = "profile_addons"
 
     // DataStore keys
     private object PrefsKeys {
@@ -1120,6 +1126,19 @@ class AuthRepository @Inject constructor(
             )
 
         if (bestPayload != null) {
+            if (bestPayload.source != ACCOUNT_SYNC_SOURCE_PRIMARY) {
+                runCatching { saveAccountSyncPayload(bestPayload.payload) }
+                    .onFailure {
+                        AppLogger.recordException(
+                            throwable = it,
+                            context = mapOf(
+                                "error_area" to "CloudSync",
+                                "cloud_flow" to "canonicalize_account_sync_payload",
+                                "payload_source" to bestPayload.source
+                            )
+                        )
+                    }
+            }
             return Result.success(bestPayload.payload)
         }
 
@@ -1146,6 +1165,7 @@ class AuthRepository @Inject constructor(
                 .decodeSingleOrNull<AccountSyncStateRow>()
             val payload = row?.payload?.takeIf { it.isNotBlank() } ?: return@runCatching null
             AccountSyncPayloadCandidate(
+                source = ACCOUNT_SYNC_SOURCE_PRIMARY,
                 payload = payload,
                 updatedAtMillis = maxOf(payloadUpdatedAtMillis(payload), parseInstantMillis(row.updated_at))
             )
@@ -1201,6 +1221,7 @@ class AuthRepository @Inject constructor(
             Result.success(
                 payload?.let {
                     AccountSyncPayloadCandidate(
+                        source = ACCOUNT_SYNC_SOURCE_USER_SETTINGS,
                         payload = it,
                         updatedAtMillis = maxOf(payloadUpdatedAtMillis(it), parseInstantMillis(updatedAt))
                     )
@@ -1253,6 +1274,7 @@ class AuthRepository @Inject constructor(
             Result.success(
                 payload?.let {
                     AccountSyncPayloadCandidate(
+                        source = ACCOUNT_SYNC_SOURCE_PROFILE_ADDONS,
                         payload = it,
                         updatedAtMillis = maxOf(payloadUpdatedAtMillis(it), decodeProfileAccountSyncUpdatedAt(row?.addons))
                     )
