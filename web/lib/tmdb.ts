@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { jsonRequest, proxiedUrl } from "./http";
-import type { CatalogConfig, Category, MediaItem, MediaType } from "./types";
+import type { CatalogConfig, Category, EpisodeInfo, MediaItem, MediaType, ReviewInfo } from "./types";
 
 type TmdbItem = {
   id: number;
@@ -244,6 +244,56 @@ export async function searchMedia(query: string, language = "en-US") {
   return response.results
     .filter((item) => item.media_type === "movie" || item.media_type === "tv")
     .map((item) => mapTmdbItem(item, item.media_type === "tv" ? "tv" : "movie"));
+}
+
+const seasonCache = new Map<string, EpisodeInfo[]>();
+
+export async function getSeasonEpisodes(tvId: number, seasonNumber: number, language = "en-US"): Promise<EpisodeInfo[]> {
+  const key = `${tvId}:${seasonNumber}`;
+  if (seasonCache.has(key)) return seasonCache.get(key)!;
+  try {
+    const season = await tmdb<{ episodes?: Array<{ id: number; episode_number: number; name?: string; overview?: string; still_path?: string | null; vote_average?: number; air_date?: string; runtime?: number }> }>(
+      `tv/${tvId}/season/${seasonNumber}`,
+      { language }
+    );
+    const episodes = (season.episodes ?? []).map((episode) => ({
+      id: episode.id,
+      episodeNumber: episode.episode_number,
+      seasonNumber,
+      name: episode.name || `Episode ${episode.episode_number}`,
+      overview: episode.overview ?? "",
+      still: episode.still_path ? `${config.imageBase}${episode.still_path}` : undefined,
+      voteAverage: episode.vote_average ?? 0,
+      airDate: episode.air_date ?? "",
+      runtime: episode.runtime ?? 0
+    }));
+    seasonCache.set(key, episodes);
+    return episodes;
+  } catch {
+    return [];
+  }
+}
+
+export async function getReviews(item: { mediaType: MediaType; id: number }): Promise<ReviewInfo[]> {
+  try {
+    const response = await tmdb<{ results?: Array<{ id: string; author?: string; content?: string; created_at?: string; author_details?: { rating?: number | null; avatar_path?: string | null } }> }>(
+      `${item.mediaType}/${item.id}/reviews`
+    );
+    return (response.results ?? []).slice(0, 12).map((review) => ({
+      id: review.id,
+      author: review.author || "Anonymous",
+      content: review.content || "",
+      rating: review.author_details?.rating ?? null,
+      createdAt: review.created_at,
+      avatar: review.author_details?.avatar_path
+        ? (review.author_details.avatar_path.startsWith("/http")
+            ? review.author_details.avatar_path.slice(1)
+            : `${config.imageBase}${review.author_details.avatar_path}`)
+        : null
+    }));
+  } catch {
+    return [];
+  }
 }
 
 const basicItemCache = new Map<string, MediaItem | null>();

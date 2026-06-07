@@ -116,6 +116,8 @@ export interface AppStore {
   setHeroPreview: (item: MediaItem | null) => void;
   selected: MediaItem | null;
   streams: StreamSource[];
+  selectedEpisode: { season: number; episode: number } | null;
+  loadEpisodeStreams: (item: MediaItem, season: number, episode: number) => Promise<void>;
   activeStream: StreamSource | null;
   activeChannel: IptvChannel | null;
   addons: InstalledAddon[];
@@ -165,6 +167,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [watchlist, setWatchlist] = useState<MediaItem[]>([]);
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [streams, setStreams] = useState<StreamSource[]>([]);
+  const [selectedEpisode, setSelectedEpisode] = useState<{ season: number; episode: number } | null>(null);
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
   const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
@@ -328,16 +331,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const openDetails = useCallback(async (item: MediaItem) => {
     setBusy("Opening details");
+    setSelectedEpisode(null);
+    setStreams([]);
     const detailed = await getDetails(item).catch(() => item);
     setSelected(detailed);
-    setBusy("Finding sources");
-    const found = await getStreams(addonsRef.current, detailed).catch(() => []);
-    setStreams(found);
+    // Movies fetch sources immediately; TV waits for an episode selection.
+    if (item.mediaType === "movie") {
+      setBusy("Finding sources");
+      const found = await getStreams(addonsRef.current, detailed).catch(() => []);
+      setStreams(found);
+    }
     setBusy("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const closeDetails = useCallback(() => setSelected(null), []);
+  const loadEpisodeStreams = useCallback(async (item: MediaItem, season: number, episode: number) => {
+    setSelectedEpisode({ season, episode });
+    setStreams([]);
+    setBusy("Finding sources");
+    const found = await getStreams(addonsRef.current, item, season, episode).catch(() => []);
+    setStreams(found);
+    setBusy("");
+  }, []);
+
+  const closeDetails = useCallback(() => {
+    setSelected(null);
+    setSelectedEpisode(null);
+    setStreams([]);
+  }, []);
 
   const playStream = useCallback((stream: StreamSource) => {
     if (!stream.url) {
@@ -478,6 +499,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setHeroPreview,
     selected,
     streams,
+    selectedEpisode,
+    loadEpisodeStreams,
     activeStream,
     activeChannel,
     addons,
@@ -511,7 +534,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }), [
     view, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
-    section, categories, catalogConfigs, loadCatalogRow, continueWatching, watchlist, hero, heroPreview, selected, streams, activeStream, activeChannel,
+    section, categories, catalogConfigs, loadCatalogRow, continueWatching, watchlist, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, activeStream, activeChannel,
     addons, iptvSnapshot, query, results, settings, auth, traktConnected, deviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playChannel, closePlayer,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt

@@ -50,6 +50,27 @@ export interface SeasonSummary {
   poster?: string;
 }
 
+export interface EpisodeInfo {
+  id: number;
+  episodeNumber: number;
+  seasonNumber: number;
+  name: string;
+  overview?: string;
+  still?: string;
+  voteAverage?: number;
+  airDate?: string;
+  runtime?: number;
+}
+
+export interface ReviewInfo {
+  id: string;
+  author: string;
+  content: string;
+  rating?: number | null;
+  createdAt?: string;
+  avatar?: string | null;
+}
+
 export interface Category {
   id: string;
   title: string;

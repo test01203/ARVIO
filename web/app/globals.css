@@ -1582,3 +1582,126 @@ input:focus {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* ============================================================
+   Phase 3 — Details: seasons/episodes, reviews, locked sources
+   ============================================================ */
+
+.season-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.season-tab {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.season-tab.is-active,
+.season-tab:hover {
+  background: #fff;
+  color: #050505;
+}
+
+.episode-list {
+  display: grid;
+  gap: 12px;
+}
+.episode-row {
+  display: flex;
+  gap: 16px;
+  text-align: left;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 12px;
+  cursor: pointer;
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+.episode-row:hover,
+.episode-row:focus-visible,
+.episode-row.is-active {
+  outline: none;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+.episode-still {
+  position: relative;
+  flex-shrink: 0;
+  width: 168px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  display: grid;
+  place-items: center;
+  color: var(--soft);
+}
+.episode-still img { width: 100%; height: 100%; object-fit: cover; }
+.episode-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.episode-row:hover .episode-play,
+.episode-row.is-active .episode-play { opacity: 1; }
+.episode-info { min-width: 0; }
+.episode-info strong { display: block; font-size: 17px; margin-bottom: 4px; }
+.episode-info > span { display: block; color: var(--soft); font-size: 13px; margin-bottom: 6px; }
+.episode-info p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px !important;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.source-row.is-locked { opacity: 0.5; }
+.source-row.is-locked .quality { color: var(--soft) !important; }
+
+.review-list { display: grid; gap: 14px; }
+.review-card {
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+.review-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.review-head img { width: 32px; height: 32px; border-radius: 999px; object-fit: cover; }
+.review-head strong { font-size: 15px; }
+.review-rating {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 14px;
+}
+.review-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px !important;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
