@@ -681,7 +681,7 @@ fun SettingsScreen(
                     val focusedStremioAddonCanDelete = focusedStremioAddon?.let { addon ->
                         !(addon.id == "opensubtitles" && addon.type == com.arflix.tv.data.model.AddonType.SUBTITLE)
                     } ?: false
-                    
+
                     val isRtl = isRtlLayoutDirection
                     val actualKey = event.key
                     val logicalKey = if (isRtl) {

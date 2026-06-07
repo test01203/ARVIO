@@ -1447,7 +1447,7 @@ class DetailsViewModel @Inject constructor(
                             val scraperInfo = pair.first
                             val results: List<LocalScraperResult>? = pair.second
                             if (!isCurrentRequest()) return@collect
-                            
+
                             val current = _uiState.value
                             if (results == null) {
                                 // Plugin started loading
@@ -1457,7 +1457,7 @@ class DetailsViewModel @Inject constructor(
                             } else {
                                 // Plugin finished loading (with or without results)
                                 val updatedNames = current.loadingPluginNames - scraperInfo.name
-                                if (results.isNotEmpty()) {
+                                if (!results.isNullOrEmpty()) {
                                     val pluginStreams = results.map { it.toStreamSource() }
                                     val merged = sortPlayableStreamsFirst(
                                         (current.streams + pluginStreams)
@@ -1478,7 +1478,17 @@ class DetailsViewModel @Inject constructor(
                     } catch (e: Exception) {
                         Log.w(TAG, "[PluginScrapers] streaming execution failed: ${e.message}")
                     } finally {
-                        _uiState.value = _uiState.value.copy(pluginScrapersLoading = false, loadingPluginNames = emptySet())
+                        val current = _uiState.value
+                        val stillLoading = loadStreamsJob?.isActive == true ||
+                                           vodAppendJob?.isActive == true ||
+                                           homeServerAppendJob?.isActive == true
+                        val newLoading = current.isLoadingStreams && current.streams.isEmpty() && stillLoading
+
+                        _uiState.value = current.copy(
+                            pluginScrapersLoading = false,
+                            loadingPluginNames = emptySet(),
+                            isLoadingStreams = newLoading
+                        )
                     }
                 }
 

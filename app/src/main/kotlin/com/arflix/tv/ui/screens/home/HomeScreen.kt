@@ -1714,24 +1714,28 @@ private fun HomeHeroLayer(
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
         val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 34.dp else 34.dp
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = AppTopBarContentTopInset)
-                .zIndex(3f)
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
         ) {
-            heroItem?.let { item ->
-                if (!item.status.orEmpty().startsWith("collection:")) {
-                    HeroSection(
-                        item = item,
-                        logoUrl = heroLogoUrl,
-                        overviewOverride = heroOverviewOverride,
-                        showBudget = showBudget,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = contentStartPadding, end = 400.dp)
-                            .offset(y = -heroBottomPadding)
-                    )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = AppTopBarContentTopInset)
+                    .zIndex(3f)
+            ) {
+                heroItem?.let { item ->
+                    if (!item.status.orEmpty().startsWith("collection:")) {
+                        HeroSection(
+                            item = item,
+                            logoUrl = heroLogoUrl,
+                            overviewOverride = heroOverviewOverride,
+                            showBudget = showBudget,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(start = contentStartPadding, end = 400.dp)
+                                .offset(y = -heroBottomPadding)
+                        )
+                    }
                 }
             }
         }

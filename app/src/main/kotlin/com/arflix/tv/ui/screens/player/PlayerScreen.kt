@@ -2006,7 +2006,7 @@ fun PlayerScreen(
         }
         aspectIndicatorTrigger++
     }
-    
+
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
     ) {
