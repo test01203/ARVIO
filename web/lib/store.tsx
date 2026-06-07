@@ -118,6 +118,7 @@ export interface AppStore {
   streams: StreamSource[];
   selectedEpisode: { season: number; episode: number } | null;
   loadEpisodeStreams: (item: MediaItem, season: number, episode: number) => Promise<void>;
+  advanceEpisode: () => Promise<boolean>;
   activeStream: StreamSource | null;
   activeChannel: IptvChannel | null;
   addons: InstalledAddon[];
@@ -354,6 +355,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBusy("");
   }, []);
 
+  const advanceEpisode = useCallback(async (): Promise<boolean> => {
+    if (!selected || selected.mediaType !== "tv" || !selectedEpisode) return false;
+    const nextEpisode = selectedEpisode.episode + 1;
+    setSelectedEpisode({ season: selectedEpisode.season, episode: nextEpisode });
+    const found = await getStreams(addonsRef.current, selected, selectedEpisode.season, nextEpisode).catch(() => []);
+    setStreams(found);
+    const best = found.find((stream) => stream.url);
+    setActiveStream(best ?? null);
+    return Boolean(best);
+  }, [selected, selectedEpisode]);
+
   const closeDetails = useCallback(() => {
     setSelected(null);
     setSelectedEpisode(null);
@@ -501,6 +513,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     streams,
     selectedEpisode,
     loadEpisodeStreams,
+    advanceEpisode,
     activeStream,
     activeChannel,
     addons,
@@ -534,7 +547,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }), [
     view, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
-    section, categories, catalogConfigs, loadCatalogRow, continueWatching, watchlist, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, activeStream, activeChannel,
+    section, categories, catalogConfigs, loadCatalogRow, continueWatching, watchlist, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, iptvSnapshot, query, results, settings, auth, traktConnected, deviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playChannel, closePlayer,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt

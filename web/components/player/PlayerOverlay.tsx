@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { SkipForward, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { config } from "@/lib/config";
 import { saveProgress } from "@/lib/cloud";
@@ -10,24 +10,31 @@ import { authClient, traktClient, useApp } from "@/lib/store";
 import type { AppSettings, MediaItem, StreamSource } from "@/lib/types";
 
 export function PlayerOverlay() {
-  const { activeStream, activeChannel, selected, settings, closePlayer } = useApp();
+  const { activeStream, activeChannel, selected, selectedEpisode, settings, advanceEpisode, closePlayer } = useApp();
   if (!activeStream?.url) return null;
+  const canAdvance = Boolean(selected?.mediaType === "tv" && selectedEpisode && !activeChannel);
   return (
     <PlayerOverlayView
       title={activeChannel?.name ?? selected?.title ?? activeStream.source}
+      subtitleLabel={selectedEpisode ? `S${selectedEpisode.season} E${selectedEpisode.episode}` : null}
       stream={activeStream}
       item={selected}
       settings={settings}
+      canAdvance={canAdvance}
+      onAdvance={advanceEpisode}
       onClose={closePlayer}
     />
   );
 }
 
-function PlayerOverlayView({ title, stream, item, settings, onClose }: {
+function PlayerOverlayView({ title, subtitleLabel, stream, item, settings, canAdvance, onAdvance, onClose }: {
   title: string;
+  subtitleLabel: string | null;
   stream: StreamSource;
   item: MediaItem | null;
   settings: AppSettings;
+  canAdvance: boolean;
+  onAdvance: () => Promise<boolean>;
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -65,20 +72,27 @@ function PlayerOverlayView({ title, stream, item, settings, onClose }: {
       }).catch(() => undefined);
       void traktClient.scrobble(video.paused ? "pause" : "start", { mediaType: item.mediaType, tmdbId: item.id, progress: progress * 100 }).catch(() => undefined);
     };
+    const onEnded = () => {
+      void traktClient.scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, progress: 100 }).catch(() => undefined);
+      if (settings.autoPlayNext && canAdvance) void onAdvance();
+    };
     video.addEventListener("timeupdate", save);
     video.addEventListener("pause", save);
-    video.addEventListener("ended", () => {
-      void traktClient.scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, progress: 100 }).catch(() => undefined);
-    });
+    video.addEventListener("ended", onEnded);
     return () => {
       save();
       video.removeEventListener("timeupdate", save);
       video.removeEventListener("pause", save);
+      video.removeEventListener("ended", onEnded);
     };
-  }, [item, stream]);
+  }, [item, stream, settings.autoPlayNext, canAdvance, onAdvance]);
+
+  // Subtitle cue styling from settings (size %, color).
+  const cueCss = `.player-overlay video::cue { color: ${settings.subtitleColor}; font-size: ${Math.max(60, Math.min(200, settings.subtitleSize))}%; background: rgba(0,0,0,0.5); }`;
 
   return (
     <section className="player-overlay">
+      <style>{cueCss}</style>
       <video ref={videoRef} controls autoPlay playsInline poster={item?.backdrop ?? undefined}>
         {(stream.subtitles ?? []).map((subtitle) => (
           <track
@@ -95,9 +109,16 @@ function PlayerOverlayView({ title, stream, item, settings, onClose }: {
         <div>
           <p className="eyebrow">{stream.addonName}</p>
           <h2>{title}</h2>
-          <span className="player-meta">{stream.quality || "HD"} {stream.subtitles?.length ? `• ${stream.subtitles.length} subtitles` : ""}</span>
+          <span className="player-meta">
+            {subtitleLabel ? `${subtitleLabel} • ` : ""}{stream.quality || "HD"} {stream.subtitles?.length ? `• ${stream.subtitles.length} subtitles` : ""}
+          </span>
         </div>
-        <button className="close light" onClick={onClose}><X size={24} /></button>
+        <div className="player-top-actions">
+          {canAdvance && (
+            <button className="player-next" onClick={() => void onAdvance()}><SkipForward size={20} /> Next episode</button>
+          )}
+          <button className="close light" onClick={onClose}><X size={24} /></button>
+        </div>
       </div>
     </section>
   );
