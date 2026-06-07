@@ -117,6 +117,9 @@ fun StreamSelector(
     addonOrderedIds: List<String> = emptyList(),
     completedAddons: Int = 0,
     totalAddons: Int = 0,
+    streamSearchStartTime: Long = 0L,
+    pluginScrapersLoading: Boolean = false,
+    loadingPluginNames: Set<String> = emptySet(),
     onFocusedStream: (StreamSource) -> Unit = {},
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
@@ -131,6 +134,18 @@ fun StreamSelector(
     val listState = rememberTvLazyListState()
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
+    val pluginPrefix = stringResource(R.string.plugin_prefix)
+
+    var elapsedSeconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(streamSearchStartTime) {
+        if (streamSearchStartTime > 0L) {
+            elapsedSeconds = 0
+            while (true) {
+                kotlinx.coroutines.delay(1000L)
+                elapsedSeconds = ((System.currentTimeMillis() - streamSearchStartTime) / 1000).toInt()
+            }
+        }
+    }
 
     // Request focus when visible
     LaunchedEffect(isVisible) {
