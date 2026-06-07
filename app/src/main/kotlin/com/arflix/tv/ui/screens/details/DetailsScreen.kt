@@ -51,6 +51,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.blur
 import com.arflix.tv.util.settingsDataStore
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
@@ -184,7 +185,6 @@ import androidx.compose.ui.res.stringResource
 
 
 private object DetailsScreenRegexes {
-    val FOUR_K_REGEX = Regex("""\b4[kK]\b""")
     val YEAR_REGEX = Regex("""\d{4}""")
 }
 
@@ -239,6 +239,7 @@ fun DetailsScreen(
     var showTrailerPlayer by remember { mutableStateOf(false) }
     KeepScreenOn(active = showTrailerPlayer)
     var pendingAutoPlayRequest by remember { mutableStateOf<PendingAutoPlayRequest?>(null) }
+    var autoPlayWaitTick by remember { mutableIntStateOf(0) }
 
     // Episode Context Menu state
     var showEpisodeContextMenu by remember { mutableStateOf(false) }
@@ -247,6 +248,18 @@ fun DetailsScreen(
     var contextMenuSeason by remember { mutableIntStateOf(1) }
     var seasonSelectDownAtMs by remember { mutableLongStateOf(0L) }
     var ignoreFirstResumeRefresh by remember(mediaType, mediaId, initialSeason, initialEpisode) { mutableStateOf(true) }
+
+    fun requestFastAutoPlay(imdbId: String?, season: Int?, episode: Int?, startPositionMs: Long?) {
+        showStreamSelector = false
+        viewModel.loadStreams(imdbId, season, episode)
+        autoPlayWaitTick = 0
+        pendingAutoPlayRequest = PendingAutoPlayRequest(
+            season = season,
+            episode = episode,
+            startPositionMs = startPositionMs,
+            requestedAtMs = SystemClock.elapsedRealtime()
+        )
+    }
 
     // Spoiler blur setting
     var spoilerBlurEnabled by remember { mutableStateOf(false) }
@@ -314,39 +327,56 @@ fun DetailsScreen(
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
 
-    LaunchedEffect(pendingAutoPlayRequest, uiState.isLoadingStreams, uiState.streams) {
+    LaunchedEffect(
+        pendingAutoPlayRequest,
+        uiState.isLoadingStreams,
+        uiState.streams,
+        uiState.autoPlayMinQuality,
+        autoPlayWaitTick
+    ) {
         val request = pendingAutoPlayRequest ?: return@LaunchedEffect
-        if (uiState.isLoadingStreams) return@LaunchedEffect
 
         val validStreams = uiState.streams.filter(::isAutoPlayableStream)
         val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
-        val singleStream = validStreams.singleOrNull()
+        val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
+        val shouldWaitForSources = shouldWaitForAutoPlaySources(
+            isLoadingStreams = uiState.isLoadingStreams,
+            selectedStream = selectedStream,
+            elapsedMs = SystemClock.elapsedRealtime() - request.requestedAtMs
+        )
 
         when {
-            singleStream != null && uiState.autoPlaySingleSource && qualityScoreForAutoPlay(singleStream.quality) >= minThreshold -> {
+            selectedStream != null && !shouldWaitForSources -> {
                 onNavigateToPlayer(
                     mediaType,
                     mediaId,
                     request.season,
                     request.episode,
                     uiState.imdbId,
-                    singleStream.url?.takeIf { it.isNotBlank() },
-                    singleStream.addonId.takeIf { it.isNotBlank() },
-                    singleStream.source.takeIf { it.isNotBlank() },
+                    selectedStream.url?.takeIf { it.isNotBlank() },
+                    selectedStream.addonId.takeIf { it.isNotBlank() },
+                    selectedStream.source.takeIf { it.isNotBlank() },
                     request.startPositionMs
                 )
+                pendingAutoPlayRequest = null
             }
-            validStreams.size > 1 || uiState.streams.isNotEmpty() -> {
+            shouldWaitForSources -> {
+                delay(AUTOPLAY_SOURCE_RECHECK_MS)
+                autoPlayWaitTick += 1
+            }
+            uiState.isLoadingStreams -> Unit
+            validStreams.isNotEmpty() || uiState.streams.isNotEmpty() -> {
                 showStreamSelector = true
+                pendingAutoPlayRequest = null
             }
             else -> {
                 // When no streams found, show the StreamSelector with its
                 // friendly "no addons" / "no sources" empty state instead of
                 // navigating to the player which would show a scary error.
                 showStreamSelector = true
+                pendingAutoPlayRequest = null
             }
         }
-        pendingAutoPlayRequest = null
     }
 
     // Sync episodeIndex with initialEpisodeIndex from ViewModel
@@ -398,10 +428,7 @@ fun DetailsScreen(
                         viewModel.loadStreams(state.imdbId, season, episode)
                     } else {
                         // Autoplay ON → go straight to the player; PlayerScreen auto-picks.
-                        onNavigateToPlayer(
-                            mediaType, mediaId, season, episode,
-                            state.imdbId, null, null, null, startPositionMs
-                        )
+                        requestFastAutoPlay(state.imdbId, season, episode, startPositionMs)
                     }
                 }
                 1 -> { // Sources
@@ -447,10 +474,7 @@ fun DetailsScreen(
                     showStreamSelector = true
                     viewModel.loadStreams(state.imdbId, ep.seasonNumber, ep.episodeNumber)
                 } else {
-                    onNavigateToPlayer(
-                        mediaType, mediaId,
-                        ep.seasonNumber, ep.episodeNumber, state.imdbId, null, null, null, null
-                    )
+                    requestFastAutoPlay(state.imdbId, ep.seasonNumber, ep.episodeNumber, null)
                 }
             }
         }
@@ -718,18 +742,8 @@ fun DetailsScreen(
                                                 showStreamSelector = true
                                                 viewModel.loadStreams(uiState.imdbId, season, episode)
                                             } else {
-                                                // Autoplay ON → go straight to the player; PlayerScreen auto-picks.
-                                                onNavigateToPlayer(
-                                                    mediaType,
-                                                    mediaId,
-                                                    season,
-                                                    episode,
-                                                    uiState.imdbId,
-                                                    null,
-                                                    null,
-                                                    null,
-                                                    startPositionMs
-                                                )
+                                                // Autoplay ON: pick a concrete stream first, then open PlayerScreen.
+                                                requestFastAutoPlay(uiState.imdbId, season, episode, startPositionMs)
                                             }
                                         }
                                         1 -> { // Sources - Show StreamSelector for manual selection
@@ -758,10 +772,7 @@ fun DetailsScreen(
                                             showStreamSelector = true
                                             viewModel.loadStreams(uiState.imdbId, ep.seasonNumber, ep.episodeNumber)
                                         } else {
-                                            onNavigateToPlayer(
-                                                mediaType, mediaId,
-                                                ep.seasonNumber, ep.episodeNumber, uiState.imdbId, null, null, null, null
-                                            )
+                                            requestFastAutoPlay(uiState.imdbId, ep.seasonNumber, ep.episodeNumber, null)
                                         }
                                     }
                                 }
@@ -835,6 +846,7 @@ fun DetailsScreen(
             // Use skeleton loader for better UX
             SkeletonDetailsPage(
                 isTV = mediaType == MediaType.TV,
+                isMobile = isMobile,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -920,22 +932,24 @@ fun DetailsScreen(
                     volume = 1f
                 )
                 // Close button for touch devices
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 48.dp, end = 16.dp)
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .clickable { showTrailerPlayer = false },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.close),
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
+                if (isMobile) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 48.dp, end = 16.dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .clickable { showTrailerPlayer = false },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.close),
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         }
@@ -988,10 +1002,7 @@ fun DetailsScreen(
                 isWatched = episode.isWatched,
                 onPlay = {
                     showEpisodeContextMenu = false
-                    onNavigateToPlayer(
-                        mediaType, mediaId,
-                        episode.seasonNumber, episode.episodeNumber, uiState.imdbId, null, null, null, null
-                    )
+                    requestFastAutoPlay(uiState.imdbId, episode.seasonNumber, episode.episodeNumber, null)
                 },
                 onSelectSource = {
                     showEpisodeContextMenu = false
@@ -1050,63 +1061,9 @@ private enum class FocusSection {
 private data class PendingAutoPlayRequest(
     val season: Int?,
     val episode: Int?,
-    val startPositionMs: Long?
+    val startPositionMs: Long?,
+    val requestedAtMs: Long
 )
-
-private fun qualityScoreForAutoPlay(quality: String): Int {
-    return when {
-        quality.contains("4K", ignoreCase = true) || quality.contains("2160p", ignoreCase = true) -> 4
-        quality.contains("1080p", ignoreCase = true) -> 3
-        quality.contains("720p", ignoreCase = true) -> 2
-        quality.contains("480p", ignoreCase = true) -> 1
-        else -> 0
-    }
-}
-
-/** Score quality from ALL stream text (source + quality + addonName) for more accurate detection */
-private fun qualityScoreForStream(stream: com.arflix.tv.data.model.StreamSource): Int {
-    val combined = listOfNotNull(stream.quality, stream.source, stream.addonName).joinToString(" ")
-    return when {
-        combined.contains("2160p", ignoreCase = true) || DetailsScreenRegexes.FOUR_K_REGEX.containsMatchIn(combined) -> 4
-        combined.contains("1080p", ignoreCase = true) -> 3
-        combined.contains("720p", ignoreCase = true) -> 2
-        combined.contains("480p", ignoreCase = true) -> 1
-        else -> 0 // Truly unknown
-    }
-}
-
-private fun minQualityThreshold(value: String): Int {
-    return when (value.trim().lowercase()) {
-        "720p", "hd" -> 2
-        "1080p", "fullhd", "fhd" -> 3
-        "4k", "2160p", "uhd" -> 4
-        else -> 0
-    }
-}
-
-private fun isAutoPlayableStream(stream: com.arflix.tv.data.model.StreamSource): Boolean {
-    val url = stream.url?.trim().orEmpty()
-    if (!url.startsWith("http", ignoreCase = true)) return false
-    return !isPendingDebridStream(stream)
-}
-
-private fun isPendingDebridStream(stream: com.arflix.tv.data.model.StreamSource): Boolean {
-    val text = listOfNotNull(stream.source, stream.addonName, stream.quality, stream.url)
-        .joinToString(" ")
-        .lowercase()
-    return listOf(
-        "torrent being downloaded",
-        "being downloaded",
-        "still downloading",
-        "queued",
-        "not cached",
-        "uncached",
-        "cache pending",
-        "caching",
-        "processing torrent",
-        "download in progress"
-    ).any { text.contains(it) }
-}
 
 private fun handleLeft(
     section: FocusSection,
@@ -1868,8 +1825,13 @@ private fun DetailsContent(
                 val hasDuration = item.duration.isNotEmpty() && item.duration != "0m"
                 val rating = imdbRatingFor(item)
                 val ratingValue = parseRatingValue(rating)
+                val hasRatingMetadata = ratingValue > 0f
                 val primaryNetworkLogo = item.primaryNetworkLogo?.takeIf { it.isNotBlank() }
                 val budgetText = budget?.trim()?.takeIf { it.isNotEmpty() && item.mediaType == MediaType.MOVIE }
+                val hasBudgetMetadata = !budgetText.isNullOrBlank()
+                val hasSecondaryMetadata = primaryNetworkLogo != null ||
+                    hasRatingMetadata ||
+                    hasBudgetMetadata
                 val overviewMaxHeight = if (isCompactHeight) 68.dp else 72.dp
 
                 val separatorStyle = ArflixTypography.caption.copy(
@@ -1877,89 +1839,116 @@ private fun DetailsContent(
                     shadow = textShadow
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.width(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Text(
-                        text = genreText,
-                        style = ArflixTypography.caption.copy(
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            shadow = textShadow
-                        ),
-                        color = Color.White
-                    )
-
-                    if (displayDate.isNotEmpty()) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
-                            text = displayDate,
+                            text = genreText,
                             style = ArflixTypography.caption.copy(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 shadow = textShadow
                             ),
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
-                    }
 
-                    if (hasDuration) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        Text(
-                            text = item.duration,
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
-                    }
-
-                    if (primaryNetworkLogo != null) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        val networkLogoRequest = remember(primaryNetworkLogo, context) {
-                            ImageRequest.Builder(context)
-                                .data(primaryNetworkLogo)
-                                .bitmapConfig(Bitmap.Config.ARGB_8888)
-                                .allowRgb565(false)
-                                .build()
+                        if (displayDate.isNotEmpty()) {
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                            Text(
+                                text = displayDate,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
+                            )
                         }
-                        AsyncImage(
-                            model = networkLogoRequest,
-                            imageLoader = metadataLogoImageLoader,
-                            contentDescription = "Primary streaming provider",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .height(16.dp)
-                                .width(52.dp)
-                        )
+
+                        if (hasDuration) {
+                            Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
+                            Text(
+                                text = item.duration,
+                                style = ArflixTypography.caption.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = textShadow
+                                ),
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                        }
                     }
 
-                    if (ratingValue > 0f) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        DetailsImdbSvgRatingBadge(
-                            rating = rating,
-                            imageLoader = metadataLogoImageLoader,
-                            ratingFontSize = 13,
-                            logoWidth = 34.dp,
-                            logoHeight = 14.dp,
-                            textShadow = textShadow
-                        )
-                    }
+                    if (hasSecondaryMetadata) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (primaryNetworkLogo != null) {
+                                val networkLogoRequest = remember(primaryNetworkLogo, context) {
+                                    ImageRequest.Builder(context)
+                                        .data(primaryNetworkLogo)
+                                        .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                        .allowRgb565(false)
+                                        .build()
+                                }
+                                AsyncImage(
+                                    model = networkLogoRequest,
+                                    imageLoader = metadataLogoImageLoader,
+                                    contentDescription = "Primary streaming provider",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(16.dp)
+                                        .width(52.dp)
+                                )
 
-                    if (!budgetText.isNullOrBlank()) {
-                        Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.7f))
-                        Text(
-                            text = "${stringResource(R.string.budget)} $budgetText",
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                shadow = textShadow
-                            ),
-                            color = Color.White
-                        )
+                                if (hasRatingMetadata || hasBudgetMetadata) {
+                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
+                                }
+                            }
+
+                            if (hasRatingMetadata) {
+                                DetailsImdbSvgRatingBadge(
+                                    rating = rating,
+                                    imageLoader = metadataLogoImageLoader,
+                                    ratingFontSize = 13,
+                                    logoWidth = 34.dp,
+                                    logoHeight = 14.dp,
+                                    textShadow = textShadow
+                                )
+
+                                if (hasBudgetMetadata) {
+                                    Text(text = "|", style = separatorStyle, color = Color.White.copy(alpha = 0.58f))
+                                }
+                            }
+
+                            if (hasBudgetMetadata) {
+                                Text(
+                                    text = "${stringResource(R.string.budget)} $budgetText",
+                                    style = ArflixTypography.caption.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        shadow = textShadow
+                                    ),
+                                    color = Color.White.copy(alpha = 0.74f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                        }
                     }
                 }
 

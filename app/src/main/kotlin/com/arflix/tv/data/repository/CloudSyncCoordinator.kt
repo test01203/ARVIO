@@ -36,7 +36,16 @@ class CloudSyncCoordinator @Inject constructor(
             collectorJob = scope.launch {
                 invalidationBus.events.collectLatest { invalidation ->
                     val userId = runCatching { authRepository.getCurrentUserId() }.getOrNull()
-                    if (userId.isNullOrBlank()) return@collectLatest
+                    if (userId.isNullOrBlank()) {
+                        cloudSyncRepository.markLocalStateDirtyNow()
+                        CloudSyncWorker.enqueueRecovery(context)
+                        Log.w("CloudSyncCoordinator", "Queued dirty ${invalidation.scope}: auth not ready")
+                        return@collectLatest
+                    }
+                    Log.i(
+                        "CloudSyncCoordinator",
+                        "Dirty ${invalidation.scope} profile=${invalidation.profileId.orEmpty()} reason=${invalidation.reason}"
+                    )
                     cloudSyncRepository.markLocalStateDirtyNow()
                     scheduleFlush(invalidation)
                 }
@@ -68,7 +77,13 @@ class CloudSyncCoordinator @Inject constructor(
                 delay(backoffMs)
 
                 val userId = runCatching { authRepository.getCurrentUserId() }.getOrNull()
-                if (userId.isNullOrBlank()) return@launch
+                if (userId.isNullOrBlank()) {
+                    cloudSyncRepository.markLocalStateDirtyNow()
+                    CloudSyncWorker.enqueueRecovery(context)
+                    Log.w("CloudSyncCoordinator", "Deferred cloud sync for ${invalidation.scope}: auth not ready")
+                    return@launch
+                }
+                Log.i("CloudSyncCoordinator", "Flushing cloud sync for ${invalidation.scope}")
                 runCatching { cloudSyncRepository.pushToCloud() }
                     .onFailure { error ->
                         Log.w("CloudSyncCoordinator", "Cloud push failed after ${invalidation.scope}: ${error.message}")

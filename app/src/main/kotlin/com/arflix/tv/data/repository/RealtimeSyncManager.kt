@@ -223,7 +223,7 @@ class RealtimeSyncManager @Inject constructor(
     }
 
     private fun joinChannel(ws: WebSocket, userId: String) {
-        // Channel 1: account_sync_state UPDATEs
+        // Channel 1: account_sync_state changes
         val accountSyncJoin = JSONObject().apply {
             put("topic", "realtime:account_sync")
             put("event", "phx_join")
@@ -231,7 +231,19 @@ class RealtimeSyncManager @Inject constructor(
                 put("config", JSONObject().apply {
                     put("postgres_changes", JSONArray().apply {
                         put(JSONObject().apply {
+                            put("event", "INSERT")
+                            put("schema", "public")
+                            put("table", "account_sync_state")
+                            put("filter", "user_id=eq.$userId")
+                        })
+                        put(JSONObject().apply {
                             put("event", "UPDATE")
+                            put("schema", "public")
+                            put("table", "account_sync_state")
+                            put("filter", "user_id=eq.$userId")
+                        })
+                        put(JSONObject().apply {
+                            put("event", "DELETE")
                             put("schema", "public")
                             put("table", "account_sync_state")
                             put("filter", "user_id=eq.$userId")
