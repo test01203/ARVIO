@@ -1447,7 +1447,7 @@ class DetailsViewModel @Inject constructor(
                             val scraperInfo = pair.first
                             val results: List<LocalScraperResult>? = pair.second
                             if (!isCurrentRequest()) return@collect
-                            
+
                             val current = _uiState.value
                             if (results == null) {
                                 // Plugin started loading

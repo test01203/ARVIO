@@ -18,23 +18,23 @@
 # Log stripping for release builds
 # Remove ALL logs for maximum performance
 # ============================================
-# -assumenosideeffects class android.util.Log {
-#     public static int v(...);
-#     public static int d(...);
-#     public static int i(...);
-#     public static int w(...);
-#     public static int e(...);
-#     public static int wtf(...);
-# }
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+    public static int w(...);
+    public static int e(...);
+    public static int wtf(...);
+}
 
 # Also strip ALL our custom AppLogger methods
-# -assumenosideeffects class com.arflix.tv.util.AppLogger {
-#     public static void v(...);
-#     public static void d(...);
-#     public static void i(...);
-#     public static void w(...);
-#     public static void e(...);
-# }
+-assumenosideeffects class com.arflix.tv.util.AppLogger {
+    public static void v(...);
+    public static void d(...);
+    public static void i(...);
+    public static void w(...);
+    public static void e(...);
+}
 
 # Strip Kotlin debug assertions in release
 -assumenosideeffects class kotlin.jvm.internal.Intrinsics {

@@ -545,7 +545,7 @@ fun StreamSelector(
 
                     // Stream list or loading/empty states
                     if (streams.isEmpty()) {
-                        val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0)
+                        val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0) || pluginScrapersLoading
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -563,7 +563,12 @@ fun StreamSelector(
                                     LoadingIndicator(color = Pink, size = 40.dp)
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Text(
-                                        text = if (totalAddons > 0) "Searching addons ($completedAddons/$totalAddons)..." else stringResource(R.string.finding_sources),
+                                        text = buildString {
+                                            if (loadingPluginNames.isNotEmpty()) append(stringResource(R.string.plugins_loading, loadingPluginNames.joinToString(", ")))
+                                            else if (pluginScrapersLoading) append(stringResource(R.string.plugins_loading, "..."))
+                                            else if (totalAddons > 0) append("Searching addons ($completedAddons/$totalAddons)...")
+                                            else append(stringResource(R.string.finding_sources))
+                                        },
                                         style = ArflixTypography.body.copy(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Medium
@@ -1559,15 +1564,16 @@ private fun SourceEmptyState(
                 .border(1.dp, OledMutedBorder, RoundedCornerShape(18.dp))
                 .padding(horizontal = 42.dp, vertical = 34.dp)
         ) {
-            val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0)
+            val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0) || pluginScrapersLoading
             if (stillSearching) {
                 LoadingIndicator(color = Color.White, size = 42.dp)
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = if (totalAddons > 0) {
-                        "Searching addons ($completedAddons/$totalAddons)"
-                    } else {
-                        stringResource(R.string.finding_sources)
+                    text = buildString {
+                        if (loadingPluginNames.isNotEmpty()) append(stringResource(R.string.plugins_loading, loadingPluginNames.joinToString(", ")))
+                        else if (pluginScrapersLoading) append(stringResource(R.string.plugins_loading, "..."))
+                        else if (totalAddons > 0) append("Searching addons ($completedAddons/$totalAddons)...")
+                        else append(stringResource(R.string.finding_sources))
                     },
                     style = ArflixTypography.body.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium),
                     color = TextSecondary

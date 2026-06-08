@@ -41,8 +41,9 @@ internal object PluginSafety {
             }
         }
 
-        // No path traversal allowed
-        if (filename.contains("..")) {
+        // No path traversal or absolute paths allowed
+        val cleanPath = filename.replace("\\", "/")
+        if (cleanPath.contains("../") || cleanPath.endsWith("..") || cleanPath.startsWith("/") || cleanPath.contains(":/")) {
             return false
         }
 
