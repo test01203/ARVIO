@@ -117,10 +117,14 @@ fun StreamSelector(
     addonOrderedIds: List<String> = emptyList(),
     completedAddons: Int = 0,
     totalAddons: Int = 0,
+    streamSearchStartTime: Long = 0L,
+    pluginScrapersLoading: Boolean = false,
+    loadingPluginNames: Set<String> = emptySet(),
     onFocusedStream: (StreamSource) -> Unit = {},
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
 ) {
+    val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     var focusedIndex by remember { mutableIntStateOf(0) }
     var focusedTabIndex by remember { mutableIntStateOf(0) }
     var selectedTabIndex by remember { mutableIntStateOf(0) }
@@ -130,6 +134,18 @@ fun StreamSelector(
     val listState = rememberTvLazyListState()
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
+    val pluginPrefix = stringResource(R.string.plugin_prefix)
+
+    var elapsedSeconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(streamSearchStartTime) {
+        if (streamSearchStartTime > 0L) {
+            elapsedSeconds = 0
+            while (true) {
+                kotlinx.coroutines.delay(1000L)
+                elapsedSeconds = ((System.currentTimeMillis() - streamSearchStartTime) / 1000).toInt()
+            }
+        }
+    }
 
     // Request focus when visible
     LaunchedEffect(isVisible) {
@@ -302,7 +318,17 @@ fun StreamSelector(
                 .background(Color.Black.copy(alpha = 0.95f))
                 .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
-                        when (event.key) {
+                        val isRtl = isRtlLayoutDirection
+                        val actualKey = event.key
+                        val logicalKey = if (isRtl) {
+                            when (actualKey) {
+                                Key.DirectionLeft -> Key.DirectionRight
+                                Key.DirectionRight -> Key.DirectionLeft
+                                else -> actualKey
+                            }
+                        } else actualKey
+
+                        when (logicalKey) {
                             Key.Back, Key.Escape -> {
                                 onClose()
                                 true
@@ -413,6 +439,8 @@ fun StreamSelector(
                     hasStreamingAddons = hasStreamingAddons,
                     completedAddons = completedAddons,
                     totalAddons = totalAddons,
+                    pluginScrapersLoading = pluginScrapersLoading,
+                    loadingPluginNames = loadingPluginNames,
                     onFilterSelected = { index ->
                         selectedFilterIndex = index
                         focusedFilterIndex = index
@@ -519,7 +547,7 @@ fun StreamSelector(
 
                     // Stream list or loading/empty states
                     if (streams.isEmpty()) {
-                        val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0)
+                        val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0) || pluginScrapersLoading
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -537,7 +565,12 @@ fun StreamSelector(
                                     LoadingIndicator(color = Pink, size = 40.dp)
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Text(
-                                        text = if (totalAddons > 0) "Searching addons ($completedAddons/$totalAddons)..." else stringResource(R.string.finding_sources),
+                                        text = buildString {
+                                            if (loadingPluginNames.isNotEmpty()) append(stringResource(R.string.plugins_loading, loadingPluginNames.joinToString(", ")))
+                                            else if (pluginScrapersLoading) append(stringResource(R.string.plugins_loading, "..."))
+                                            else if (totalAddons > 0) append("Searching addons ($completedAddons/$totalAddons)...")
+                                            else append(stringResource(R.string.finding_sources))
+                                        },
                                         style = ArflixTypography.body.copy(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Medium
@@ -631,6 +664,8 @@ private fun OledSourceSelectorTv(
     hasStreamingAddons: Boolean,
     completedAddons: Int,
     totalAddons: Int,
+    pluginScrapersLoading: Boolean,
+    loadingPluginNames: Set<String>,
     onFilterSelected: (Int) -> Unit,
     onAddonSelected: (Int) -> Unit,
     onSelect: (StreamSource) -> Unit
@@ -736,7 +771,9 @@ private fun OledSourceSelectorTv(
                     isLoading = isLoading,
                     completedAddons = completedAddons,
                     totalAddons = totalAddons,
-                    hasStreamingAddons = hasStreamingAddons
+                    hasStreamingAddons = hasStreamingAddons,
+                    pluginScrapersLoading = pluginScrapersLoading,
+                    loadingPluginNames = loadingPluginNames
                 )
                 flatPresentations.isEmpty() -> SourceEmptyState(
                     isLoading = false,
@@ -1520,6 +1557,8 @@ private fun SourceEmptyState(
     completedAddons: Int,
     totalAddons: Int,
     hasStreamingAddons: Boolean,
+    pluginScrapersLoading: Boolean = false,
+    loadingPluginNames: Set<String> = emptySet(),
     message: String? = null
 ) {
     Box(
@@ -1533,15 +1572,16 @@ private fun SourceEmptyState(
                 .border(1.dp, OledMutedBorder, RoundedCornerShape(18.dp))
                 .padding(horizontal = 42.dp, vertical = 34.dp)
         ) {
-            val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0)
+            val stillSearching = isLoading || (completedAddons < totalAddons && totalAddons > 0) || pluginScrapersLoading
             if (stillSearching) {
                 LoadingIndicator(color = Color.White, size = 42.dp)
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = if (totalAddons > 0) {
-                        "Searching addons ($completedAddons/$totalAddons)"
-                    } else {
-                        stringResource(R.string.finding_sources)
+                    text = buildString {
+                        if (loadingPluginNames.isNotEmpty()) append(stringResource(R.string.plugins_loading, loadingPluginNames.joinToString(", ")))
+                        else if (pluginScrapersLoading) append(stringResource(R.string.plugins_loading, "..."))
+                        else if (totalAddons > 0) append("Searching addons ($completedAddons/$totalAddons)...")
+                        else append(stringResource(R.string.finding_sources))
                     },
                     style = ArflixTypography.body.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium),
                     color = TextSecondary

@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
+import com.arflix.tv.core.plugin.PluginManager
+import com.arflix.tv.domain.model.LocalScraperResult
 import javax.inject.Inject
 
 data class DetailsUiState(
@@ -62,6 +64,9 @@ data class DetailsUiState(
     val streams: List<StreamSource> = emptyList(),
     val subtitles: List<Subtitle> = emptyList(),
     val isLoadingStreams: Boolean = false,
+    val streamSearchStartTime: Long = 0L,
+    val pluginScrapersLoading: Boolean = false,
+    val loadingPluginNames: Set<String> = emptySet(),
     val completedAddons: Int = 0,
     val totalAddons: Int = 0,
     val hasStreamingAddons: Boolean = true,
@@ -171,6 +176,7 @@ private fun isSupplementalStream(stream: StreamSource): Boolean =
 class DetailsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mediaRepository: MediaRepository,
+    private val pluginManager: PluginManager,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
     private val streamRepository: StreamRepository,
@@ -1332,7 +1338,9 @@ class DetailsViewModel @Inject constructor(
             completedAddons = 0,
             totalAddons = 0,
             streams = emptyList(),
-            subtitles = emptyList()
+            subtitles = emptyList(),
+            streamSearchStartTime = System.currentTimeMillis(),
+            pluginScrapersLoading = false
         )
         val requestId = ++loadStreamsRequestId
         val requestMediaType = currentMediaType
@@ -1377,7 +1385,9 @@ class DetailsViewModel @Inject constructor(
                 totalAddons = 0,
                 streams = emptyList(),
                 subtitles = emptyList(),
-                addonOrderedIds = orderedAddonIds
+                addonOrderedIds = orderedAddonIds,
+                streamSearchStartTime = System.currentTimeMillis(),
+                pluginScrapersLoading = false
             )
 
             if (requestMediaType == MediaType.MOVIE) {
@@ -1420,6 +1430,56 @@ class DetailsViewModel @Inject constructor(
                         requestMediaType = requestMediaType,
                         requestMediaId = requestMediaId
                     )
+                }
+
+                var pluginScraperJob: kotlinx.coroutines.Job? = null
+                pluginScraperJob = viewModelScope.launch {
+                    try {
+                        _uiState.value = _uiState.value.copy(pluginScrapersLoading = true)
+                        val tmdbIdStr = requestMediaId.toString()
+                        val pluginMediaType = if (requestMediaType == MediaType.MOVIE) "movie" else "tv"
+                        pluginManager.executeScrapersStreaming(
+                            tmdbId = tmdbIdStr,
+                            mediaType = pluginMediaType,
+                            season = if (requestMediaType != MediaType.MOVIE) (season ?: 1) else null,
+                            episode = if (requestMediaType != MediaType.MOVIE) (episode ?: 1) else null
+                        ).collect { pair ->
+                            val scraperInfo = pair.first
+                            val results: List<LocalScraperResult>? = pair.second
+                            if (!isCurrentRequest()) return@collect
+
+                            val current = _uiState.value
+                            if (results == null) {
+                                // Plugin started loading
+                                _uiState.value = current.copy(
+                                    loadingPluginNames = current.loadingPluginNames + scraperInfo.name
+                                )
+                            } else {
+                                // Plugin finished loading (with or without results)
+                                val updatedNames = current.loadingPluginNames - scraperInfo.name
+                                if (results.isNotEmpty()) {
+                                    val pluginStreams = results.map { it.toStreamSource() }
+                                    val merged = sortPlayableStreamsFirst(
+                                        (current.streams + pluginStreams)
+                                            .distinctBy { "${it.url?.trim().orEmpty()}|${it.source}" }
+                                    )
+                                    _uiState.value = current.copy(
+                                        streams = merged,
+                                        isLoadingStreams = false,
+                                        loadingPluginNames = updatedNames
+                                    )
+                                } else {
+                                    _uiState.value = current.copy(
+                                        loadingPluginNames = updatedNames
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[PluginScrapers] streaming execution failed: ${e.message}")
+                    } finally {
+                        _uiState.value = _uiState.value.copy(pluginScrapersLoading = false, loadingPluginNames = emptySet())
+                    }
                 }
 
                 val result = if (currentMediaType == MediaType.MOVIE) {
@@ -1480,7 +1540,7 @@ class DetailsViewModel @Inject constructor(
                             homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = mergedStreams.isEmpty() &&
-                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading || pluginScraperJob?.isActive == true),
                             completedAddons = progressive.completedAddons,
                             totalAddons = progressive.totalAddons,
                             streams = mergedStreams,
@@ -1536,7 +1596,7 @@ class DetailsViewModel @Inject constructor(
                             homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                         _uiState.value = _uiState.value.copy(
                             isLoadingStreams = mergedStreams.isEmpty() &&
-                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                                (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading || pluginScraperJob?.isActive == true),
                             completedAddons = progressive.completedAddons,
                             totalAddons = progressive.totalAddons,
                             streams = mergedStreams,
@@ -2510,4 +2570,26 @@ private object DetailsVMRegexes {
         pattern = "\\b[a-z0-9-]+\\.(?:com|net|org|xyz|top|click|link|site|online|shop|info)\\b",
         option = RegexOption.IGNORE_CASE
     )
+
 }
+
+private fun LocalScraperResult.toStreamSource(): StreamSource = StreamSource(
+    source = title,
+    addonName = provider ?: name ?: "Plugin",
+    addonId = "plugin_${provider?.lowercase()?.replace(" ", "_") ?: "unknown"}",
+    quality = quality ?: "Unknown",
+    size = size ?: "",
+    sizeBytes = null,
+    url = url,
+    infoHash = infoHash,
+    fileIdx = null,
+    behaviorHints = headers?.let { hdrs ->
+        com.arflix.tv.data.model.StreamBehaviorHints(
+            notWebReady = false,
+            proxyHeaders = com.arflix.tv.data.model.ProxyHeaders(request = hdrs)
+        )
+    },
+    subtitles = emptyList(),
+    sources = emptyList(),
+    description = null
+)
