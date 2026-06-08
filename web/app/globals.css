@@ -2091,3 +2091,58 @@ input:focus {
   pointer-events: auto;
 }
 .player-next:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* ============================================================
+   Motion polish — entrance animations, scrollbar, reduced-motion
+   ============================================================ */
+
+@keyframes arvio-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes arvio-rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes arvio-drawer-in { from { opacity: 0; transform: scale(1.015); } to { opacity: 1; transform: none; } }
+
+/* Section content fades/rises in when switching tabs */
+.content > .screen,
+.settings-shell {
+  animation: arvio-rise-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.profile-shell,
+.login-shell { animation: arvio-fade-in 320ms ease both; }
+
+.details-drawer { animation: arvio-drawer-in 300ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.player-overlay { animation: arvio-fade-in 240ms ease both; }
+.modal-scrim { animation: arvio-fade-in 180ms ease both; }
+.profile-dialog { animation: arvio-rise-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.toast { animation: arvio-rise-in 220ms ease both; }
+
+/* Hero copy rises in */
+.hero-copy > * { animation: arvio-rise-in 460ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.hero-copy > *:nth-child(2) { animation-delay: 40ms; }
+.hero-copy > *:nth-child(3) { animation-delay: 80ms; }
+.hero-copy > *:nth-child(4) { animation-delay: 120ms; }
+
+/* Page scrollbar — subtle, on-brand */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(237, 237, 237, 0.28) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(237, 237, 237, 0.22);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(237, 237, 237, 0.4); background-clip: padding-box; }
+
+/* Crisper card titles (closer to Android's medium weight) */
+.media-card strong { font-weight: 560; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
