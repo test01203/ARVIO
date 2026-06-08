@@ -1,8 +1,24 @@
 # ARVIO Web ↔ Android Parity — Design
 
 **Date:** 2026-06-07
-**Status:** Approved (approach + roadmap)
+**Status:** In progress — Phases 0–6 built & verified; 7–8 remaining
 **Goal:** Make the browser app in `web/` reach feature + screen parity with the Android/TV app in `app/` — same screens, same settings, same catalogs, same backend — for TV and desktop browsers.
+
+## Progress log
+
+| Phase | Status | Notes |
+|---|---|---|
+| 0 — Foundation | ✅ Done | Monolith → components + `lib/store.tsx`; same Supabase/TMDB/Trakt backend wired via `.env.local`; Arctic design tokens. |
+| 1 — Entry | ✅ Done | Login, Profile Selection (84 avatars + colors), profile switcher; profiles read/write the shared `account_sync_state` payload. |
+| 2 — Home + Catalogs | ✅ Done | Hero + card title-treatment logos, hero metadata, hover-hero; MDBList id-extraction fixed (all rows resolve); lazy rails (eager 8 + scroll). |
+| 3 — Details | ✅ Done | Season tabs + episode list, per-episode sources, reviews, cast, related; non-playable sources marked. |
+| 4 — Player | ✅ Done | HLS playback, subtitle cue styling from settings, Trakt + Supabase scrobble, auto-play-next + manual next-episode. |
+| 5 — Settings | ✅ Done | Sidebar + 12 sections; all web-meaningful options; Android-only ones disabled; clock format + OLED wired live. |
+| 6 — Live TV | ✅ Done | M3U/EPG playlists, groups, favorites, now/next with times + live progress, browser HLS playback. |
+| 7 — Extended backends | ⏳ Pending | Home Server (config UI done; browse/play pending), anime mapping (Jikan/Kitsu/ARM), skip-intro, Telegram. |
+| 8 — Visual parity + i18n + QA | ⏳ Pending | Pixel polish vs screenshots, accent themes/poster-mode applied, 50-language strings, cross-browser + remote-nav QA. |
+
+All shipped phases verified: `tsc` clean, `next build` success, in-browser smoke test of every screen with zero console errors. Work lives on branch `web-android-parity`.
 
 ---
 
