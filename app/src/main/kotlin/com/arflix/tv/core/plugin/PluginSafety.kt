@@ -42,8 +42,12 @@ internal object PluginSafety {
         }
 
         // No path traversal or absolute paths allowed
-        val cleanPath = filename.replace("\\", "/")
-        if (cleanPath.contains("../") || cleanPath.endsWith("..") || cleanPath.startsWith("/") || cleanPath.contains(":/")) {
+        val file = java.io.File(filename)
+        if (file.isAbsolute) {
+            return false
+        }
+        val normalized = file.normalize().path.replace("\\", "/")
+        if (normalized.startsWith("../") || normalized == "..") {
             return false
         }
 

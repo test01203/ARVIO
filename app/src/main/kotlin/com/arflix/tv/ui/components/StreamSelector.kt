@@ -439,6 +439,8 @@ fun StreamSelector(
                     hasStreamingAddons = hasStreamingAddons,
                     completedAddons = completedAddons,
                     totalAddons = totalAddons,
+                    pluginScrapersLoading = pluginScrapersLoading,
+                    loadingPluginNames = loadingPluginNames,
                     onFilterSelected = { index ->
                         selectedFilterIndex = index
                         focusedFilterIndex = index
@@ -662,6 +664,8 @@ private fun OledSourceSelectorTv(
     hasStreamingAddons: Boolean,
     completedAddons: Int,
     totalAddons: Int,
+    pluginScrapersLoading: Boolean,
+    loadingPluginNames: Set<String>,
     onFilterSelected: (Int) -> Unit,
     onAddonSelected: (Int) -> Unit,
     onSelect: (StreamSource) -> Unit
@@ -767,7 +771,9 @@ private fun OledSourceSelectorTv(
                     isLoading = isLoading,
                     completedAddons = completedAddons,
                     totalAddons = totalAddons,
-                    hasStreamingAddons = hasStreamingAddons
+                    hasStreamingAddons = hasStreamingAddons,
+                    pluginScrapersLoading = pluginScrapersLoading,
+                    loadingPluginNames = loadingPluginNames
                 )
                 flatPresentations.isEmpty() -> SourceEmptyState(
                     isLoading = false,
@@ -1551,6 +1557,8 @@ private fun SourceEmptyState(
     completedAddons: Int,
     totalAddons: Int,
     hasStreamingAddons: Boolean,
+    pluginScrapersLoading: Boolean = false,
+    loadingPluginNames: Set<String> = emptySet(),
     message: String? = null
 ) {
     Box(

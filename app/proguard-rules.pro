@@ -120,19 +120,6 @@
 -dontwarn javax.script.**
 -dontwarn org.mozilla.javascript.**
 
-# CloudStream API & Dependencies (External plugins are compiled against these)
--keep class com.lagradost.** { *; }
--keep interface com.lagradost.** { *; }
--dontwarn com.lagradost.**
-
--keep class org.jsoup.** { *; }
--keep interface org.jsoup.** { *; }
--dontwarn org.jsoup.**
-
--keep class com.fasterxml.jackson.** { *; }
--keep interface com.fasterxml.jackson.** { *; }
--dontwarn com.fasterxml.jackson.**
-
 # ============================================
 # Hilt / Dagger - KEEP EVERYTHING
 # ============================================
