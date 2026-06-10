@@ -737,12 +737,23 @@ private fun orderPlaylistGroups(
 ): List<Map.Entry<String, Pair<String, Int>>> {
     if (groups.isEmpty()) return emptyList()
     if (groupOrder.isEmpty()) return groups.entries.toList()
-    val orderMap = groupOrder
-        .map(::playlistGroupLabel)
+    val orderMap = groupOrder.asSequence()
+        .flatMap { rawOrder ->
+            val trimmed = rawOrder.trim()
+            val groupName = com.arflix.tv.data.model.PlaylistGroupKey(trimmed).groupName
+            sequenceOf(trimmed, playlistGroupLabel(groupName))
+        }
+        .distinct()
         .withIndex()
-        .associate { (index, groupName) -> groupName to index }
+        .associate { (index, key) -> key to index }
     return groups.entries.sortedWith(
-        compareBy<Map.Entry<String, Pair<String, Int>>> { entry -> orderMap[entry.value.first] ?: Int.MAX_VALUE }
+        compareBy<Map.Entry<String, Pair<String, Int>>> { entry ->
+            val playlistId = playlistIdFromGroupCategoryId(entry.key).orEmpty()
+            val label = playlistGroupLabel(entry.value.first)
+            orderMap[playlistGroupKey(playlistId, label)]
+                ?: orderMap[label]
+                ?: Int.MAX_VALUE
+        }
             .thenBy { entry -> groups.keys.indexOf(entry.key) }
     )
 }

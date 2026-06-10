@@ -524,7 +524,23 @@ private fun SidebarRow(
     var consumedLongPress by remember { mutableStateOf(false) }
     var selectPressed by remember { mutableStateOf(false) }
     var longPressJob by remember { mutableStateOf<Job?>(null) }
+    var menuFocusedIndex by remember(showMenu) { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    val menuActions = remember(canMove, canHide, canUnhide, onMoveToTop, onMoveUp, onMoveDown, onHide, onUnhide) {
+        buildCategoryMenuActions(
+            canMove = canMove,
+            canHide = canHide,
+            canUnhide = canUnhide,
+            onHide = onHide,
+            onUnhide = onUnhide,
+            onMoveUp = onMoveUp,
+            onMoveToTop = onMoveToTop,
+            onMoveDown = onMoveDown,
+        )
+    }
+    fun runMenuAction(index: Int) {
+        menuActions.getOrNull(index.coerceIn(0, (menuActions.size - 1).coerceAtLeast(0)))?.onClick?.invoke()
+    }
     val bg = when {
         active && focused -> LiveColors.FocusBg
         active -> LiveColors.FocusBg
@@ -565,6 +581,30 @@ private fun SidebarRow(
                 .focusable()
                 .onKeyEvent { ev ->
                     val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter
+                    if (showMenu && menuActions.isNotEmpty()) {
+                        if (ev.type != KeyEventType.KeyDown) {
+                            return@onKeyEvent isSelect
+                        }
+                        return@onKeyEvent when (ev.key) {
+                            Key.DirectionUp -> {
+                                menuFocusedIndex = (menuFocusedIndex - 1).coerceAtLeast(0)
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                menuFocusedIndex = (menuFocusedIndex + 1).coerceAtMost(menuActions.lastIndex)
+                                true
+                            }
+                            Key.DirectionCenter, Key.Enter -> {
+                                runMenuAction(menuFocusedIndex)
+                                true
+                            }
+                            Key.DirectionLeft, Key.Back, Key.Escape -> {
+                                onDismissMenu()
+                                true
+                            }
+                            else -> true
+                        }
+                    }
                     when {
                         !isSelect -> false
                         ev.type == KeyEventType.KeyDown -> {
@@ -657,17 +697,13 @@ private fun SidebarRow(
                 }
             }
         }
-        if (showMenu && (canHide || canUnhide || canMove)) {
+        if (showMenu && menuActions.isNotEmpty()) {
             CategoryContextMenu(
                 onDismiss = onDismissMenu,
-                canHide = canHide,
-                canUnhide = canUnhide,
-                canMove = canMove,
-                onHide = onHide,
-                onUnhide = onUnhide,
-                onMoveUp = onMoveUp,
-                onMoveToTop = onMoveToTop,
-                onMoveDown = onMoveDown,
+                actions = menuActions,
+                focusedIndex = menuFocusedIndex,
+                onFocusedIndexChange = { menuFocusedIndex = it.coerceIn(0, menuActions.lastIndex) },
+                onAction = { runMenuAction(it) },
             )
         }
     }
@@ -677,31 +713,13 @@ private fun SidebarRow(
 @Composable
 private fun CategoryContextMenu(
     onDismiss: () -> Unit,
-    canHide: Boolean,
-    canUnhide: Boolean,
-    canMove: Boolean,
-    onHide: () -> Unit,
-    onUnhide: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveToTop: () -> Unit,
-    onMoveDown: () -> Unit,
+    actions: List<CategoryMenuAction>,
+    focusedIndex: Int,
+    onFocusedIndexChange: (Int) -> Unit,
+    onAction: (Int) -> Unit,
 ) {
-    val actions = buildList {
-        if (canMove) {
-            add(CategoryMenuAction("Move to top", Icons.Filled.KeyboardArrowUp, onMoveToTop))
-            add(CategoryMenuAction("Move up", Icons.Filled.KeyboardArrowUp, onMoveUp))
-            add(CategoryMenuAction("Move down", Icons.Filled.KeyboardArrowDown, onMoveDown))
-        }
-        if (canHide) {
-            add(CategoryMenuAction("Hide category", Icons.Filled.VisibilityOff, onHide))
-        }
-        if (canUnhide) {
-            add(CategoryMenuAction("Unhide category", Icons.Filled.Visibility, onUnhide))
-        }
-    }
     if (actions.isEmpty()) return
 
-    var focusedIndex by remember(actions.size) { mutableStateOf(0) }
     var ignoreSelectUntilRelease by remember { mutableStateOf(true) }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -743,15 +761,15 @@ private fun CategoryContextMenu(
                         else -> {
                             when (event.key) {
                             Key.DirectionUp -> {
-                                focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
+                                onFocusedIndexChange((focusedIndex - 1).coerceAtLeast(0))
                                 true
                             }
                             Key.DirectionDown -> {
-                                focusedIndex = (focusedIndex + 1).coerceAtMost(actions.lastIndex)
+                                onFocusedIndexChange((focusedIndex + 1).coerceAtMost(actions.lastIndex))
                                 true
                             }
                             Key.DirectionCenter, Key.Enter -> {
-                                actions[focusedIndex].onClick()
+                                onAction(focusedIndex)
                                 true
                             }
                             Key.DirectionLeft, Key.Back, Key.Escape -> {
@@ -774,6 +792,29 @@ private fun CategoryContextMenu(
                 )
             }
         }
+    }
+}
+
+private fun buildCategoryMenuActions(
+    canHide: Boolean,
+    canUnhide: Boolean,
+    canMove: Boolean,
+    onHide: () -> Unit,
+    onUnhide: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveToTop: () -> Unit,
+    onMoveDown: () -> Unit,
+): List<CategoryMenuAction> = buildList {
+    if (canMove) {
+        add(CategoryMenuAction("Move to top", Icons.Filled.KeyboardArrowUp, onMoveToTop))
+        add(CategoryMenuAction("Move up", Icons.Filled.KeyboardArrowUp, onMoveUp))
+        add(CategoryMenuAction("Move down", Icons.Filled.KeyboardArrowDown, onMoveDown))
+    }
+    if (canHide) {
+        add(CategoryMenuAction("Hide category", Icons.Filled.VisibilityOff, onHide))
+    }
+    if (canUnhide) {
+        add(CategoryMenuAction("Unhide category", Icons.Filled.Visibility, onUnhide))
     }
 }
 
