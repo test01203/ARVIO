@@ -30,10 +30,11 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 35
-        versionCode = 272
-        versionName = "1.9.93"
+        versionCode = 293
+        versionName = "1.9.95"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
+        buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
 
 
         // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
@@ -137,6 +138,12 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    sourceSets {
+        getByName("main") {
+            java.srcDir("src/main/tdlib-java")
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -182,7 +189,25 @@ ksp {
     arg("dagger.hilt.android.internal.disableAndroidSuperclassValidation", "true")
 }
 
-dependencies {
+    // Kotlin 2.3.0 emits class metadata v2.3.0, which Hilt 2.57's bundled
+    // kotlin-metadata-jvm (max v2.2.0) cannot read — hiltJavaCompile fails with
+    // "Provided Metadata instance has version 2.3.0". Force the reader library to
+    // 2.3.0 on every configuration (incl. Hilt's annotation-processor classpath) so
+    // Hilt 2.57 can process Kotlin 2.3.0 metadata without moving to Hilt 2.59 (AGP 9).
+    configurations.all {
+        resolutionStrategy {
+            force("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
+        }
+    }
+
+    dependencies {
+    // Gson explicit pin to keep `JsonParser`/AST extension API stable with current sources.
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // Cast / Chromecast support
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("com.google.android.gms:play-services-cast-framework:22.2.0")
+
     // Core library desugaring for Java 8+ APIs
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
@@ -194,7 +219,9 @@ dependencies {
     // Provides collectAsStateWithLifecycle — pauses Flow collection while the
     // screen is off so we don't drive recompositions on invisible UI.
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.activity:activity:1.10.0")
+    implementation("androidx.activity:activity-ktx:1.10.0")
+    implementation("androidx.activity:activity-compose:1.10.0")
 
     // Compose BOM — bumped alongside Kotlin 2.1. Staying on the 2024.06
     // line keeps tv-foundation 1.0.0-alpha11 happy; newer BOMs drift the
@@ -215,13 +242,11 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.6")
 
-    // Hilt for DI — 2.54 is the first release with Kotlin 2.1 metadata
-    // support on the Java compile side. 2.52 fails on `hiltJavaCompile*`
-    // with "Unable to read Kotlin metadata due to unsupported metadata
-    // version" because Hilt parses generated `@Module` classes that carry
-    // Kotlin 2.1's newer metadata format.
-    implementation("com.google.dagger:hilt-android:2.54")
-    ksp("com.google.dagger:hilt-compiler:2.54")
+    // Hilt for DI — 2.57 (last stable for AGP 8.x). 2.59's Gradle plugin demands
+    // AGP 9 + Gradle 9.1 and is broken there (dagger#5099). androidx.hilt is held at
+    // stable 1.2.0 below so hilt-work doesn't drag dagger back up to 2.59.
+    implementation("com.google.dagger:hilt-android:2.57")
+    ksp("com.google.dagger:hilt-compiler:2.57")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
 
     // Leanback (TV compliance, browse fragments if needed)
@@ -268,6 +293,11 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.0.4")
     implementation("io.github.jan-tennert.supabase:gotrue-kt:2.0.4")
     implementation("io.ktor:ktor-client-android:2.3.7")
+    // Ktor server modules used by Telegram streaming proxy
+    implementation("io.ktor:ktor-server-core:2.3.7")
+    implementation("io.ktor:ktor-server-cio:2.3.7")
+    implementation("io.ktor:ktor-server-call-logging:2.3.7")
+    implementation("io.ktor:ktor-server-host-common:2.3.7")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
@@ -279,8 +309,10 @@ dependencies {
 
     // WorkManager for background sync
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("androidx.hilt:hilt-work:1.1.0")
-    ksp("androidx.hilt:hilt-compiler:1.1.0")
+    // Stable 1.2.0: the 1.4.0-rc01 RC depends on dagger Hilt 2.59 and forces the whole
+    // graph onto the AGP-9-only (and currently broken) 2.59. 1.2.0 works with Hilt 2.57.
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Profile installer for baseline profiles
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")
@@ -405,3 +437,6 @@ detekt {
     // Don't fail build on issues (use baseline instead)
     ignoreFailures = true
 }
+
+
+

@@ -5,7 +5,9 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,8 +57,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -89,13 +94,15 @@ fun CategorySidebar(
     tree: LiveCategoryTree,
     selectedId: String,
     expanded: Boolean,
+    listState: LazyListState,
+    focusRequester: FocusRequester? = null,
     onSelect: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onHideCategory: (String?, String) -> Unit = { _, _ -> },
     onUnhideCategory: (String?, String) -> Unit = { _, _ -> },
-    onMoveCategoryUp: (String) -> Unit = {},
-    onMoveCategoryToTop: (String) -> Unit = {},
-    onMoveCategoryDown: (String) -> Unit = {},
+    onMoveCategoryUp: (String?, String) -> Unit = { _, _ -> },
+    onMoveCategoryToTop: (String?, String) -> Unit = { _, _ -> },
+    onMoveCategoryDown: (String?, String) -> Unit = { _, _ -> },
     onFocusEnter: () -> Unit = {},
     onMoveRight: () -> Unit = {},
     onMoveUpFromSearch: () -> Unit = {},
@@ -113,6 +120,8 @@ fun CategorySidebar(
     var expandedAll by rememberSaveable { mutableStateOf(false) }
     var menuForCategoryId by rememberSaveable { mutableStateOf<String?>(null) }
     val searchFocusRequester = remember { FocusRequester() }
+    val selectedCategoryFocusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(focusSearchSignal) {
         if (focusSearchSignal > 0) {
@@ -136,12 +145,16 @@ fun CategorySidebar(
 
     Column(
         modifier = modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .width(animatedWidth)
             .fillMaxHeight()
             .background(LiveColors.PanelDeep)
-            .onFocusChanged { if (it.hasFocus) onFocusEnter() }
-            // Trap DPAD_LEFT at the sidebar edge so the key doesn't bubble
-            // up to the Activity and back out to the Android launcher.
+            .focusGroup()
+            .onFocusChanged { focusState ->
+                if (focusState.hasFocus) {
+                    onFocusEnter()
+                }
+            }
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) {
                     false
@@ -161,11 +174,17 @@ fun CategorySidebar(
             onClick = onOpenSearch,
             expanded = expanded,
             onMoveUp = onMoveUpFromSearch,
+            onMoveDown = {
+                tree.top.firstOrNull()?.let { first ->
+                    onSelect(first.id)
+                }
+            },
             onFocusChanged = onTopBoundaryFocusChanged,
             focusRequester = searchFocusRequester,
         )
         Spacer(Modifier.height(8.dp))
         LazyColumn(
+            state = listState,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             items(tree.top, key = { it.id }) { cat ->
@@ -179,6 +198,7 @@ fun CategorySidebar(
                     expanded = expanded,
                     hasChildren = isAllGroup,
                     isOpenGroup = isOpen,
+                    focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                     onFocused = { onTopBoundaryFocusChanged(false) },
                     onClick = {
                         if (isAllGroup) {
@@ -200,6 +220,7 @@ fun CategorySidebar(
                             labelSize = 10.5.sp,
                             hasChildren = child.children.isNotEmpty(),
                             isOpenGroup = child.containsId(selectedId),
+                            focusRequester = if (selectedId == child.id) selectedCategoryFocusRequester else null,
                             onFocused = { onTopBoundaryFocusChanged(false) },
                             onClick = { onSelect(child.id) },
                         )
@@ -213,6 +234,7 @@ fun CategorySidebar(
                                     expanded = true,
                                     indent = 48.dp,
                                     labelSize = 9.5.sp,
+                                    focusRequester = if (selectedId == grandchild.id) selectedCategoryFocusRequester else null,
                                     onFocused = { onTopBoundaryFocusChanged(false) },
                                     onClick = { onSelect(grandchild.id) },
                                 )
@@ -233,6 +255,7 @@ fun CategorySidebar(
                         showMenu = menuForCategoryId == cat.id,
                         canHide = cat.playlistGroupName != null,
                         canMove = cat.playlistGroupName != null,
+                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                         onFocused = { onTopBoundaryFocusChanged(false) },
                         onLongClick = {
                             menuForCategoryId = cat.id
@@ -246,17 +269,17 @@ fun CategorySidebar(
                         onMoveUp = {
                             val groupName = cat.playlistGroupName ?: return@SidebarRow
                             menuForCategoryId = null
-                            onMoveCategoryUp(groupName)
+                            onMoveCategoryUp(cat.playlistId, groupName)
                         },
                         onMoveToTop = {
                             val groupName = cat.playlistGroupName ?: return@SidebarRow
                             menuForCategoryId = null
-                            onMoveCategoryToTop(groupName)
+                            onMoveCategoryToTop(cat.playlistId, groupName)
                         },
                         onMoveDown = {
                             val groupName = cat.playlistGroupName ?: return@SidebarRow
                             menuForCategoryId = null
-                            onMoveCategoryDown(groupName)
+                            onMoveCategoryDown(cat.playlistId, groupName)
                         },
                         onClick = { onSelect(cat.id) },
                     )
@@ -273,6 +296,7 @@ fun CategorySidebar(
                         expanded = expanded,
                         showMenu = menuForCategoryId == "hidden:${cat.id}",
                         canUnhide = cat.playlistGroupName != null,
+                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                         onFocused = { onTopBoundaryFocusChanged(false) },
                         onLongClick = {
                             menuForCategoryId = "hidden:${cat.id}"
@@ -303,6 +327,7 @@ fun CategorySidebar(
                         expanded = expanded,
                         hasChildren = country.children.isNotEmpty(),
                         isOpenGroup = isExpanded,
+                        focusRequester = if (selectedId == country.id) selectedCategoryFocusRequester else null,
                         onFocused = { onTopBoundaryFocusChanged(false) },
                         onClick = {
                             // Tap always toggles expansion. Opening also selects so
@@ -327,6 +352,7 @@ fun CategorySidebar(
                                 expanded = true,
                                 indent = 40.dp,
                                 labelSize = 10.5.sp,
+                                focusRequester = if (selectedId == child.id) selectedCategoryFocusRequester else null,
                                 onFocused = { onTopBoundaryFocusChanged(false) },
                                 onClick = { onSelect(child.id) },
                             )
@@ -343,6 +369,7 @@ fun CategorySidebar(
                         icon = Icons.Filled.Lock,
                         active = selectedId == cat.id,
                         expanded = expanded,
+                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
                         onFocused = { onTopBoundaryFocusChanged(false) },
                         onClick = { onSelect(cat.id) },
                     )
@@ -358,9 +385,11 @@ private fun SearchEntry(
     onClick: () -> Unit,
     expanded: Boolean,
     onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
     onFocusChanged: (Boolean) -> Unit = {},
     focusRequester: FocusRequester? = null,
 ) {
+    val focusManager = LocalFocusManager.current
     var focused by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
@@ -371,6 +400,27 @@ private fun SearchEntry(
                 onFocusChanged(it.isFocused)
             }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown) {
+                    false
+                } else when (ev.key) {
+                    Key.DirectionUp -> {
+                        onMoveUp()
+                        focusManager.moveFocus(FocusDirection.Up)
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        onMoveDown()
+                        focusManager.moveFocus(FocusDirection.Down)
+                        true
+                    }
+                    Key.DirectionCenter, Key.Enter -> {
+                        onClick()
+                        true
+                    }
+                    else -> false
+                }
+            }
             .border(
                 width = if (focused) 3.dp else 0.dp,
                 color = if (focused) LiveColors.FocusRing else Color.Transparent,
@@ -384,6 +434,10 @@ private fun SearchEntry(
                 when (ev.key) {
                     Key.DirectionUp -> {
                         onMoveUp()
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        onMoveDown()
                         true
                     }
                     Key.DirectionCenter, Key.Enter -> {
@@ -648,16 +702,27 @@ private fun CategoryContextMenu(
     if (actions.isEmpty()) return
 
     var focusedIndex by remember(actions.size) { mutableStateOf(0) }
-    var ignoreSelectUntilRelease by remember(actions.size) { mutableStateOf(true) }
+    var ignoreSelectUntilRelease by remember { mutableStateOf(true) }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        repeat(4) {
+            if (runCatching { focusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+            delay(40L)
+        }
+    }
+    LaunchedEffect(Unit) {
+        delay(900L)
+        ignoreSelectUntilRelease = false
     }
 
     Popup(
         alignment = Alignment.CenterEnd,
         onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+        ),
     ) {
         Column(
             modifier = Modifier
@@ -668,15 +733,15 @@ private fun CategoryContextMenu(
                 .focusable()
                 .onPreviewKeyEvent { event ->
                     val isSelect = event.key == Key.DirectionCenter || event.key == Key.Enter
-                    if (ignoreSelectUntilRelease && isSelect) {
-                        if (event.type == KeyEventType.KeyUp) {
+                    when {
+                        event.type == KeyEventType.KeyUp && isSelect && ignoreSelectUntilRelease -> {
                             ignoreSelectUntilRelease = false
+                            true
                         }
-                        true
-                    } else if (event.type != KeyEventType.KeyDown) {
-                        false
-                    } else {
-                        when (event.key) {
+                        event.type != KeyEventType.KeyDown -> false
+                        isSelect && ignoreSelectUntilRelease -> true
+                        else -> {
+                            when (event.key) {
                             Key.DirectionUp -> {
                                 focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
                                 true
@@ -694,6 +759,7 @@ private fun CategoryContextMenu(
                                 true
                             }
                             else -> false
+                            }
                         }
                     }
                 }
@@ -730,6 +796,7 @@ private fun CategoryMenuItem(
             .height(36.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (focused) LiveColors.FocusRing else Color.Transparent)
+            .clickable { onClick() }
             .pointerInput(onClick) { detectTapGestures(onTap = { onClick() }) }
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

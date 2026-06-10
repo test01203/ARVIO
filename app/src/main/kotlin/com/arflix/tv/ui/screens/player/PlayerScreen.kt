@@ -3666,11 +3666,6 @@ private fun PulsingLogo(
                         model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxWidth(0.76f).height(152.dp)
                     )
-                } else {
-                    Text(
-                        title, style = ArflixTypography.sectionTitle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
-                        color = Color.White
-                    )
                 }
             }
         }

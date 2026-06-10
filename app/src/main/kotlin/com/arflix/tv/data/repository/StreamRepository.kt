@@ -241,11 +241,7 @@ class StreamRepository @Inject constructor(
     private fun torrServerBaseUrlKey() = profileManager.profileStringKey("torrserver_base_url_v1")
     private fun addonHealthKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "addon_health_v1")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
-    private val streamResultCacheBundleType = TypeToken.getParameterized(
-        Map::class.java,
-        String::class.java,
-        PersistedStreamResultPayload::class.java
-    ).type
+    private val streamResultCacheBundleType = object : TypeToken<Map<String, PersistedStreamResultPayload>>() {}.type
     private val streamResultCacheDiskTtlMs = 4 * 60 * 60_000L
     private val streamResultCacheDiskStaleGraceMs = 5 * 60_000L
     private val streamResultCacheDiskMaxEntries = 320
@@ -261,7 +257,7 @@ class StreamRepository @Inject constructor(
     private fun decodeStreamResultCacheBundle(raw: String): Map<String, PersistedStreamResultPayload> {
         if (raw.isBlank()) return emptyMap()
         return runCatching {
-            gson.fromJson(raw, streamResultCacheBundleType)
+            gson.fromJson(raw, streamResultCacheBundleType) as? Map<String, PersistedStreamResultPayload> ?: emptyMap()
         }.getOrElse {
             Log.w(TAG, "[StreamCache][Decode] malformed stream result cache payload")
             emptyMap()

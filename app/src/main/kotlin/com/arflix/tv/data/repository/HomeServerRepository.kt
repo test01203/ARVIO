@@ -558,12 +558,37 @@ class HomeServerRepository @Inject constructor(
     }
 
     private suspend fun saveConnections(connections: List<HomeServerConnection>) {
-        val profileId = profileManager.getProfileId()
+        saveConnectionsForProfile(profileManager.getProfileId(), connections)
+    }
+
+    private suspend fun saveConnectionsForProfile(
+        profileId: String,
+        connections: List<HomeServerConnection>
+    ) {
         context.settingsDataStore.edit { prefs ->
             prefs[connectionKeyFor(profileId)] = gson.toJson(
                 HomeServerProfileConfig(connections = connections.map { it.sanitized().encryptedForStorage() })
             )
         }
+    }
+
+    suspend fun exportCloudConnectionsJsonForProfile(profileId: String): String {
+        val connections = currentConnectionsForProfile(profileId)
+        if (connections.isEmpty()) return ""
+        return gson.toJson(HomeServerProfileConfig(connections = connections.map { it.sanitized() }))
+    }
+
+    suspend fun importCloudConnectionsJsonForProfile(profileId: String, json: String?) {
+        if (json.isNullOrBlank()) {
+            context.settingsDataStore.edit { prefs -> prefs.remove(connectionKeyFor(profileId)) }
+            return
+        }
+        saveConnectionsForProfile(profileId, parseConnections(json))
+    }
+
+    private suspend fun currentConnectionsForProfile(profileId: String): List<HomeServerConnection> {
+        val prefs = context.settingsDataStore.data.first()
+        return parseConnections(prefs[connectionKeyFor(profileId)])
     }
 
     private fun connectionKeyFor(profileId: String) =

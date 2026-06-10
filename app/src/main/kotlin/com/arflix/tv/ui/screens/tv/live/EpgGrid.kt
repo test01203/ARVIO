@@ -57,11 +57,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-private const val EpgPastWindowMinutes = 48 * 60
-private const val EpgFutureWindowMinutes = 24 * 60
-private const val CompactEpgPastWindowMinutes = 48 * 60
-private const val CompactEpgFutureWindowMinutes = 12 * 60
-private const val ChannelWindowPrefetchThreshold = 18
+private const val EpgPastWindowMinutes = 2 * 60
+// Past 48h + future 48h: the guide shows a full ±48h span so users can scroll back
+// for catch-up and forward to plan. The SQLite guide index keeps a wider window
+// (past 48h / future 96h) so this data is already available without a refetch.
+private const val EpgFutureWindowMinutes = 10 * 60
+private const val CompactEpgPastWindowMinutes = 90
+private const val CompactEpgFutureWindowMinutes = 6 * 60
+private const val ChannelWindowPrefetchThreshold = 10
 
 enum class EpgGridFocusMode {
     ChannelList,
@@ -642,7 +645,13 @@ private fun ProgramsRow(
                 }
             ),
     ) {
-        val placements = remember(programs, placeholderTitle, windowStartMillis, windowEndMillis, nowMillis) {
+        // Placement geometry (cell offsets/widths + gap placeholders) does NOT depend
+        // on the clock, so it is keyed only on the programmes and window. This stops the
+        // whole row's layout from being rebuilt on every 30s clock tick — the recompute
+        // storm that made dpad navigation hitch. The now/past state is derived cheaply
+        // per render from `nowMillis` via ProgramPlacement.isNow()/isPast(), and the
+        // placeholder anchor refreshes whenever `windowStartMillis` rounds forward.
+        val placements = remember(programs, placeholderTitle, windowStartMillis, windowEndMillis) {
             buildProgramPlacements(programs, windowStartMillis, windowEndMillis, nowMillis, placeholderTitle)
         }
         val focusablePlacementIndices = remember(placements, channel.catchupDays, nowMillis, epgMode) {
@@ -686,19 +695,21 @@ private fun ProgramsRow(
                 val isCatchupSupported = placement.isCatchupSupported(channel, nowMillis)
                 val focusableIndex = focusableIndexByPlacementIndex[placementIndex] ?: -1
                 val isFocusable = focusableIndex >= 0
+                val placementIsNow = placement.isNow(nowMillis)
+                val placementIsPast = placement.isPast(nowMillis)
                 ProgramCell(
                     program = placement.program,
                     clockTickMillis = clockTickMillis,
                     width = width,
-                    isNow = placement.isNow,
-                    isPast = placement.isPast,
-                    isFocusTarget = placement.isNow,
+                    isNow = placementIsNow,
+                    isPast = placementIsPast,
+                    isFocusTarget = placementIsNow,
                     focusable = isFocusable,
                     isCatchupSupported = isCatchupSupported,
                     onClick = {
-                        if (placement.isPast && isCatchupSupported) {
+                        if (placementIsPast && isCatchupSupported) {
                             onClick(placement.program)
-                        } else if (!placement.isPast) {
+                        } else if (!placementIsPast) {
                             onClick(null)
                         }
                     },
@@ -806,11 +817,13 @@ private data class ProgramPlacement(
     val program: IptvProgram,
     val startMin: Int,
     val durationMin: Int,
-    val isNow: Boolean,
-    val isPast: Boolean,
+    val startMillis: Long,
+    val endMillis: Long,
     val isPlaceholder: Boolean = false,
 ) {
     val endMin: Int get() = startMin + durationMin
+    fun isNow(nowMs: Long): Boolean = nowMs in startMillis until endMillis
+    fun isPast(nowMs: Long): Boolean = endMillis <= nowMs
 }
 
 private data class ProgramFocusTarget(val startMin: Int, val endMin: Int) {
@@ -841,7 +854,7 @@ private fun effectiveCatchupDays(channel: EnrichedChannel): Int {
 }
 
 private fun ProgramPlacement.canFocus(channel: EnrichedChannel, nowMillis: Long): Boolean =
-    !isPast || isCatchupSupported(channel, nowMillis)
+    !isPast(nowMillis) || isCatchupSupported(channel, nowMillis)
 
 private fun buildProgramPlacements(
     programs: List<IptvProgram>,
@@ -881,8 +894,8 @@ private fun buildProgramPlacements(
                 program = program,
                 startMin = ((clampedStart - windowStartMillis) / 60_000L).toInt(),
                 durationMin = ((clampedEnd - clampedStart) / 60_000L).toInt().coerceAtLeast(1),
-                isNow = nowMillis in clampedStart until clampedEnd,
-                isPast = clampedEnd <= nowMillis
+                startMillis = clampedStart,
+                endMillis = clampedEnd,
             )
             cursor = clampedEnd
         }
@@ -925,8 +938,9 @@ private fun addPlaceholderPlacement(
         program = IptvProgram(title, startUtcMillis = placeholderStart, endUtcMillis = placeholderEnd),
         startMin = ((placeholderStart - windowStartMillis) / 60_000L).toInt(),
         durationMin = ((placeholderEnd - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
-        isNow = nowMillis in placeholderStart until placeholderEnd,
-        isPast = placeholderEnd <= nowMillis,
+        startMillis = placeholderStart,
+        endMillis = placeholderEnd,
         isPlaceholder = true,
     )
 }
+

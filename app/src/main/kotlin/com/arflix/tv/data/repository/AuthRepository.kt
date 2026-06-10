@@ -121,8 +121,12 @@ private data class AccountSyncPayloadCandidate(
     val updatedAtMillis: Long
 )
 
+private fun parseJsonObject(payload: String): com.google.gson.JsonObject? {
+    return runCatching { JsonParser().parse(payload).asJsonObject }.getOrNull()
+}
+
 internal fun accountSyncPayloadProfileCount(payload: String): Int? {
-    val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return null
+    val root = parseJsonObject(payload) ?: return null
     if (!root.has("profiles")) return null
     return root.get("profiles")
         ?.takeIf { !it.isJsonNull && it.isJsonArray }
@@ -132,7 +136,7 @@ internal fun accountSyncPayloadProfileCount(payload: String): Int? {
 }
 
 internal fun accountSyncPayloadScopedCoverage(payload: String): Int {
-    val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return 0
+    val root = parseJsonObject(payload) ?: return 0
     val profileIds = root.get("profiles")
         ?.takeIf { !it.isJsonNull && it.isJsonArray }
         ?.asJsonArray
@@ -165,7 +169,7 @@ internal fun accountSyncPayloadScopedCoverage(payload: String): Int {
 }
 
 internal fun accountSyncPayloadRestoreRank(payload: String): Int {
-    val root = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull() ?: return 0
+    val root = parseJsonObject(payload) ?: return 0
     val profiles = root.get("profiles")
         ?.takeIf { !it.isJsonNull && it.isJsonArray }
         ?.asJsonArray

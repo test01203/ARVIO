@@ -193,6 +193,7 @@ class IptvRepository @Inject constructor(
     private val xtreamSeriesEpisodeCacheMutex = Mutex()
     private val xtreamSeriesEpisodeInFlightMutex = Mutex()
     private val epgIndex by lazy { IptvEpgIndex(context) }
+    private val channelStore by lazy { IptvChannelStore(context) }
     private val maxSeriesEpisodeCacheEntries = 8
 
     @Volatile
@@ -268,6 +269,33 @@ class IptvRepository @Inject constructor(
         cachedChannelsLookupSource = source
         cachedChannelsById = rebuilt
         return rebuilt
+    }
+
+    private fun channelsForEpgRefresh(channelIds: Collection<String>): List<IptvChannel> {
+        if (channelIds.isEmpty()) return emptyList()
+        val lookup = cachedChannelLookup()
+        val channels = ArrayList<IptvChannel>(channelIds.size)
+        val missing = LinkedHashSet<String>()
+        channelIds.forEach { id ->
+            val trimmed = id.trim()
+            if (trimmed.isBlank()) return@forEach
+            val channel = lookup[trimmed]
+            if (channel != null) {
+                channels += channel
+            } else {
+                missing += trimmed
+            }
+        }
+        if (missing.isNotEmpty()) {
+            val indexed = runCatching { channelStore.getByIds(currentEpgIndexKey, missing) }
+                .onFailure { error -> System.err.println("[EPG-Refresh] paged channel lookup failed: ${error.message}") }
+                .getOrDefault(emptyList())
+            if (indexed.isNotEmpty()) {
+                channels += indexed
+                System.err.println("[EPG-Refresh] hydrated ${indexed.size}/${missing.size} channels from paged store")
+            }
+        }
+        return channels.distinctBy { it.id }
     }
 
     private data class ScopedEpgCandidate(
@@ -2064,6 +2092,85 @@ class IptvRepository @Inject constructor(
 
     fun indexedGuideProgramCount(): Int = countIndexedGuidePrograms()
 
+    // ── Paged channel access (Stage 2) ─────────────────────────────────────────
+    // Backed by the SQLite channel store so the Live TV UI can page the channel
+    // list per category/window instead of holding all (50k+) channels in memory.
+    // Keyed by the active index key (set during loadSnapshot / cache ownership).
+
+    fun pagedChannelsReady(): Boolean =
+        currentEpgIndexKey.isNotBlank() && runCatching { channelStore.count(currentEpgIndexKey) }.getOrDefault(0) > 0
+
+    fun pagedChannelCount(groupTitle: String?): Int =
+        runCatching { channelStore.countForGroup(currentEpgIndexKey, groupTitle) }.getOrDefault(0)
+
+    fun pagedChannelWindow(groupTitle: String?, offset: Int, limit: Int): List<IptvChannel> =
+        runCatching { channelStore.windowForGroup(currentEpgIndexKey, groupTitle, offset, limit) }.getOrDefault(emptyList())
+
+    fun pagedChannelCount(playlistId: String?, groupTitle: String?): Int =
+        runCatching { channelStore.countForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle) }.getOrDefault(0)
+
+    fun pagedChannelWindow(playlistId: String?, groupTitle: String?, offset: Int, limit: Int): List<IptvChannel> =
+        runCatching { channelStore.windowForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle, offset, limit) }.getOrDefault(emptyList())
+
+    fun pagedChannelStoreCount(): Int =
+        runCatching { channelStore.count(currentEpgIndexKey) }.getOrDefault(0)
+
+    fun pagedChannelGroupCounts(): List<Pair<String, Int>> =
+        runCatching { channelStore.groupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
+
+    fun pagedPlaylistGroupCounts(): List<Triple<String, String, Int>> =
+        runCatching { channelStore.playlistGroupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
+
+    fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
+        runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
+
+    fun pagedChannelIndexOf(groupTitle: String?, channelId: String): Int =
+        runCatching { channelStore.indexOfId(currentEpgIndexKey, groupTitle, channelId) }.getOrDefault(-1)
+
+    fun pagedSearchChannels(query: String, limit: Int): List<IptvChannel> =
+        runCatching { channelStore.search(currentEpgIndexKey, query, limit) }.getOrDefault(emptyList())
+
+    fun indexedGuideWindow(
+        channelIds: Set<String>,
+        startMs: Long,
+        endMs: Long
+    ): Map<String, IptvNowNext> {
+        if (channelIds.isEmpty() || startMs >= endMs) return emptyMap()
+        val indexKey = currentEpgIndexKey
+        if (indexKey.isBlank()) return emptyMap()
+        val nowMs = System.currentTimeMillis()
+        return runCatching {
+            buildMap {
+                epgIndex.loadWindow(indexKey, channelIds, startMs, endMs)
+                    .forEach { (channelId, programs) ->
+                    if (programs.isEmpty()) return@forEach
+                    val sorted = programs
+                        .asSequence()
+                        .filter { it.endUtcMillis > it.startUtcMillis }
+                        .distinctBy { "${it.startUtcMillis}|${it.endUtcMillis}|${it.title}" }
+                        .sortedBy { it.startUtcMillis }
+                        .toList()
+                    if (sorted.isEmpty()) return@forEach
+                    val now = sorted.lastOrNull { it.isLive(nowMs) }
+                    val future = sorted.filter { it.startUtcMillis > nowMs }
+                    val recent = sorted.filter { it.endUtcMillis <= nowMs }
+                    put(
+                        channelId,
+                        IptvNowNext(
+                            now = now,
+                            next = future.getOrNull(0),
+                            later = future.getOrNull(1),
+                            upcoming = future.take(96),
+                            recent = recent.takeLast(96)
+                        )
+                    )
+                }
+            }
+        }.onFailure { error ->
+            System.err.println("[EPG-Index] visible window read failed: ${error.message}")
+        }.getOrDefault(emptyMap())
+    }
+
     /**
      * Refreshes short Xtream EPG data for the specified channel IDs.
      *
@@ -2084,8 +2191,7 @@ class IptvRepository @Inject constructor(
             } else {
                 channelIds
             }
-            val lookup = cachedChannelLookup()
-            val channels = requested.mapNotNull(lookup::get)
+            val channels = channelsForEpgRefresh(requested)
             if (channels.isEmpty()) return@withContext null
 
             val activePlaylistById = activePlaylists(config).associateBy { it.id }
@@ -2101,7 +2207,10 @@ class IptvRepository @Inject constructor(
                 if (resolveXtreamStreamId(channel) == null) continue
                 channelsByCredentials.getOrPut(creds) { mutableListOf() }.add(channel)
             }
-            val allChannelsByCredentials = groupXtreamChannelsByCredentials(config, cachedChannels)
+            val allChannelsByCredentials = groupXtreamChannelsByCredentials(
+                config,
+                (cachedChannels + channels).distinctBy { it.id }
+            )
             val mergedNowNext = ConcurrentHashMap<String, IptvNowNext>()
             var totalListings = 0
             var totalErrors = 0
@@ -5650,33 +5759,57 @@ class IptvRepository @Inject constructor(
         var errors = 0
         var fetched = 0
         val total = streamIds.size.coerceAtLeast(1)
-        val allListings = fetchXtreamFullEpgListingsAsync(
-            creds = creds,
-            streamIds = streamIds,
-            timeoutMillis = xtreamFullEpgSweepTimeout(streamIds.size),
-            parallelism = xtreamFullEpgSweepConcurrency(streamIds.size)
-        ) { _, hadError ->
-            fetched++
-            if (hadError) errors++
-            if (fetched % 50 == 0) {
-                val pct = (90 + ((fetched.toLong() * 8L) / total.toLong())).toInt().coerceIn(90, 98)
-                onProgress(IptvLoadProgress("Loading full EPG... $fetched/$total streams", pct))
+        val channelsById = channels.associateBy { it.id }
+        val indexKey = currentEpgIndexKey
+
+        // Process the stream set in batches: fetch a batch's listings, build its
+        // now/next slice, PERSIST it to the SQLite EPG index, then drop it so the
+        // next batch can be GC'd. Accumulating all 10k+ streams' listings at once
+        // exhausted the 384MB heap and OOM-crashed the app. Memory now stays bounded
+        // to one batch regardless of playlist size, and the guide still reaches full
+        // coverage (the index, which the grid reads from, accumulates every batch).
+        val batchSize = 600
+        var totalIndexed = 0
+        var firstBatch: Map<String, IptvNowNext> = emptyMap()
+        for (batchStreamIds in streamIds.chunked(batchSize)) {
+            val batchListings = fetchXtreamFullEpgListingsAsync(
+                creds = creds,
+                streamIds = batchStreamIds,
+                timeoutMillis = xtreamFullEpgSweepTimeout(batchStreamIds.size),
+                parallelism = xtreamFullEpgSweepConcurrency(batchStreamIds.size)
+            ) { _, hadError ->
+                fetched++
+                if (hadError) errors++
+                if (fetched % 50 == 0) {
+                    val pct = (90 + ((fetched.toLong() * 8L) / total.toLong())).toInt().coerceIn(90, 98)
+                    onProgress(IptvLoadProgress("Loading full EPG... $fetched/$total streams", pct))
+                }
             }
+            if (batchListings.isEmpty()) continue
+            val batchNowNext = buildNowNextFromXtreamListings(
+                creds = creds,
+                listings = batchListings,
+                epgIdToChannelIds = epgIdToChannelIds,
+                streamIdToChannelIds = streamIdToChannelIds,
+                channelsById = channelsById,
+                forceCatchupHistory = true
+            )
+            if (batchNowNext.isNotEmpty()) {
+                if (indexKey.isNotBlank()) {
+                    runCatching { epgIndex.replaceChannels(indexKey, batchNowNext, System.currentTimeMillis()) }
+                }
+                totalIndexed += batchNowNext.size
+                if (firstBatch.isEmpty()) firstBatch = batchNowNext
+            }
+            // batchListings + batchNowNext now eligible for GC before the next batch.
         }
-        System.err.println("[EPG] Xtream full EPG done: ${allListings.size} listings, $fetched fetched, $errors errors")
+        System.err.println("[EPG] Xtream full EPG done (batched): $fetched fetched, $errors errors, indexed=$totalIndexed channels")
 
-        if (errors > fetched / 2 && fetched > 20) return null
-        if (allListings.isEmpty()) return null
-
-        onProgress(IptvLoadProgress("Parsing full EPG data (${allListings.size} listings)...", 98))
-        return buildNowNextFromXtreamListings(
-            creds = creds,
-            listings = allListings,
-            epgIdToChannelIds = epgIdToChannelIds,
-            streamIdToChannelIds = streamIdToChannelIds,
-            channelsById = channels.associateBy { it.id },
-            forceCatchupHistory = true
-        )
+        if (totalIndexed == 0) return null
+        // Return only the first batch for the in-memory cache: the full guide already
+        // lives in the SQLite index (which the UI queries per visible window), so we
+        // never hand the whole 10k-channel map back to the caller (that re-OOM'd).
+        return firstBatch
     }
 
     private fun representativeXtreamEpgStreamIds(
@@ -7347,27 +7480,21 @@ class IptvRepository @Inject constructor(
         loadedAtMs: Long
     ) {
         runCatching {
-            val compactChannels = channels.map { channel ->
-                // Keep cache lean: strip raw EXTINF metadata but preserve logos for cold-start display.
-                channel.copy(
-                    rawTitle = channel.name
-                )
+            // Channels are persisted to the SQLite channel store (streamed, bounded
+            // memory) instead of being serialized to a giant gzipped-JSON blob. This
+            // removes the ~50k-channel Gson serialization (plus the 50k channel.copy()
+            // allocations) that spiked the 384MB-capped heap into a blocking-GC spiral.
+            runCatching {
+                val key = currentEpgIndexKey(config)
+                val existingCount = channelStore.count(key)
+                if (existingCount > LargeIptvListChannelCount && channels.size < existingCount) {
+                    System.err.println("[IPTV-Paged] Keeping full channel store ($existingCount); skip partial write ${channels.size}")
+                } else {
+                    channelStore.replaceAll(key, channels, loadedAtMs)
+                }
             }
-            val channelPayload = IptvChannelCachePayload(
-                channels = compactChannels,
-                loadedAtEpochMs = loadedAtMs,
-                configSignature = buildConfigSignature(config),
-                sourceSignature = buildSourceSignature(config),
-                discoveredEpgUrls = discoveredM3uEpgUrls
-                    .asSequence()
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                    .toList()
-            )
-            channelCacheFile().writeBytes(gzipBytes(gson.toJson(channelPayload)))
 
-            val channelsById = compactChannels.associateBy { it.id }
+            val channelsById = channels.associateBy { it.id }
             val compactNowNext = nowNext
                 .asSequence()
                 .filter { (_, value) -> hasProgramData(value) }
@@ -7393,7 +7520,9 @@ class IptvRepository @Inject constructor(
                     )
                 }
             val payload = IptvCachePayload(
-                channels = compactChannels,
+                // Channels live in the SQLite store now; the guide cache keeps only the
+                // now/next slice. (readCache is only consumed for its nowNext.)
+                channels = emptyList(),
                 nowNext = compactNowNext,
                 loadedAtEpochMs = loadedAtMs,
                 configSignature = buildConfigSignature(config),
@@ -7446,7 +7575,9 @@ class IptvRepository @Inject constructor(
             if (text.isBlank()) return null
             val payload = gson.fromJson(text, IptvCachePayload::class.java) ?: return null
             if (!isValidCacheSignature(config, payload.configSignature, payload.sourceSignature)) return null
-            if (payload.channels.isEmpty()) return null
+            // Channels now come from the SQLite store, so the guide cache is channel-less;
+            // it's only useful for its nowNext slice.
+            if (payload.channels.isEmpty() && payload.nowNext.isEmpty()) return null
             rememberDiscoveredEpgUrls(payload.discoveredEpgUrls.orEmpty())
             payload
         }.getOrNull()
@@ -7458,6 +7589,39 @@ class IptvRepository @Inject constructor(
     }
 
     private fun readDedicatedChannelCache(config: IptvConfig): IptvChannelCachePayload? {
+        // Prefer the SQLite channel store: streamed cursor read, no multi-MB JSON parse.
+        // The store is keyed by the config-derived index key, so its contents already
+        // correspond to the current playlist/profile.
+        runCatching {
+            val key = currentEpgIndexKey(config)
+            val count = if (key.isNotBlank()) channelStore.count(key) else 0
+            if (count in PARTIAL_PAGED_CACHE_REPAIR_COUNTS && hasAnyConfiguredSource(config)) {
+                System.err.println("[IPTV-Paged] Repairing partial channel store count=$count; forcing playlist cache reload")
+                runCatching { channelStore.deleteSource(key) }
+                return@runCatching
+            }
+            if (count > 0) {
+                val channels = if (count > LargeIptvListChannelCount) {
+                    channelStore.window(key, offset = 0, limit = 240)
+                } else {
+                    channelStore.loadAll(key)
+                }
+                if (channels.isNotEmpty()) {
+                    if (count > LargeIptvListChannelCount) {
+                        System.err.println("[IPTV-Paged] Large channel cache first paint window=${channels.size}/$count")
+                    }
+                    return IptvChannelCachePayload(
+                        channels = channels,
+                        loadedAtEpochMs = channelStore.updatedAtMs(key),
+                        configSignature = buildConfigSignature(config),
+                        sourceSignature = buildSourceSignature(config),
+                        discoveredEpgUrls = discoveredM3uEpgUrls
+                            .asSequence().map { it.trim() }.filter { it.isNotBlank() }.distinct().toList()
+                    )
+                }
+            }
+        }
+        // Legacy Gson channel cache fallback (pre-store builds).
         return runCatching {
             val file = channelCacheFile()
             if (!file.exists()) return null
@@ -8170,6 +8334,7 @@ class IptvRepository @Inject constructor(
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val CONFIG_KEY_ALIAS = "arvio_iptv_config_v1"
         const val MAX_IPTV_CACHE_BYTES = 25L * 1024L * 1024L
+        val PARTIAL_PAGED_CACHE_REPAIR_COUNTS = setOf(144, 240)
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
