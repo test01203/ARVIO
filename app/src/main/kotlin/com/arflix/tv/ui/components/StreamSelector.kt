@@ -180,7 +180,8 @@ fun StreamSelector(
             } else {
                 baseName
             }
-            AddonTab(id, label)
+            val finalLabel = if (id.startsWith("plugin_")) "$pluginPrefix$label" else label
+            AddonTab(id, finalLabel)
         }.let { tabs ->
             if (addonOrderedIds.isEmpty()) tabs
             else tabs.sortedBy { tab ->
