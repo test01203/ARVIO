@@ -3371,6 +3371,7 @@ private fun MobileSettingsMainPage(
                     add("Playback & Controls" to Icons.Default.PlayArrow)
                     add("Audio & Subtitles" to Icons.Default.Speaker)
                     add("Appearance" to Icons.Default.Palette)
+                    add("Addons" to Icons.Default.Extension)
                     if (BuildConfig.FEATURE_PLUGINS_ENABLED) {
                         add("Plugins & Extensions" to Icons.Default.Extension)
                     }
@@ -3770,7 +3771,7 @@ private fun MobileSettingsSubPage(
                     )
                 }
             }
-            "Plugins & Extensions" -> {
+            "Addons", "Plugins & Extensions" -> {
                 StremioAddonsSettings(
                     addons = stremioAddons,
                     focusedIndex = -1,
