@@ -70,6 +70,7 @@ import kotlinx.coroutines.withContext
 fun SearchOverlay(
     channels: List<EnrichedChannel>,
     nowNext: Map<String, IptvNowNext> = emptyMap(),
+    searchProvider: (suspend (String) -> List<EnrichedChannel>)? = null,
     onDismiss: () -> Unit,
     onPick: (EnrichedChannel) -> Unit,
 ) {
@@ -86,13 +87,25 @@ fun SearchOverlay(
         debounced = query.trim()
     }
 
-    LaunchedEffect(debounced, channels, nowNext) {
+    LaunchedEffect(debounced, channels, nowNext, searchProvider) {
         val q = debounced.lowercase()
         if (q.isEmpty()) {
             // Show the first 60 by default — gives a preview list users can scroll.
             results = channels.take(60).map { channel ->
                 SearchResult(channel, nowNext[channel.id]?.now?.let { "Now: ${it.title}" })
             }
+            return@LaunchedEffect
+        }
+        val providerResults = searchProvider
+            ?.let { provider -> withContext(Dispatchers.IO) { provider(q) } }
+            .orEmpty()
+        if (providerResults.isNotEmpty()) {
+            results = providerResults
+                .distinctBy { it.id }
+                .take(200)
+                .map { channel ->
+                    SearchResult(channel, nowNext[channel.id]?.now?.let { "Now: ${it.title}" })
+                }
             return@LaunchedEffect
         }
         results = withContext(Dispatchers.Default) {

@@ -110,6 +110,7 @@ data class SettingsUiState(
     val trailerAutoPlay: Boolean = false,
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 2,
+    val trailerInCards: Boolean = true,
     val showBudget: Boolean = true,
     // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
     // attached to the ExoPlayer audio session. Issue #88.
@@ -124,6 +125,7 @@ data class SettingsUiState(
     val showCloudEmailPasswordDialog: Boolean = false,
     val isCloudAuthWorking: Boolean = false,
     val isForceCloudSyncing: Boolean = false,
+    val lastCloudSyncStatus: String? = null,
     val shouldSwitchProfile: Boolean = false,
     // Trakt
     val isTraktAuthenticated: Boolean = false,
@@ -258,6 +260,7 @@ class SettingsViewModel @Inject constructor(
     private fun trailerAutoPlayKey() = profileManager.profileBooleanKey("trailer_auto_play")
     private fun trailerSoundEnabledKey() = profileManager.profileBooleanKey("trailer_sound_enabled")
     private fun trailerDelayKey() = profileManager.profileStringKey("trailer_delay_seconds")
+    private fun trailerInCardsKey() = profileManager.profileBooleanKey("trailer_in_cards")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
     private fun clockFormatKey() = profileManager.profileStringKey("clock_format")
     private fun smoothScrollingKey() = profileManager.profileBooleanKey("smooth_scrolling")
@@ -437,6 +440,7 @@ class SettingsViewModel @Inject constructor(
             val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: false
             val trailerSoundEnabled = prefs[trailerSoundEnabledKey()] ?: false
             val trailerDelaySeconds = prefs[trailerDelayKey()]?.toIntOrNull() ?: 2
+            val trailerInCards = prefs[trailerInCardsKey()] ?: true
             val spoilerBlurEnabled = prefs[spoilerBlurKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
@@ -521,6 +525,7 @@ class SettingsViewModel @Inject constructor(
                 trailerAutoPlay = trailerAutoPlay,
                 trailerSoundEnabled = trailerSoundEnabled,
                 trailerDelaySeconds = trailerDelaySeconds,
+                trailerInCards = trailerInCards,
                 showBudget = showBudget,
                 volumeBoostDb = volumeBoostDb,
                 showLoadingStats = showLoadingStats,
@@ -1127,6 +1132,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { context.settingsDataStore.edit { it[trailerSoundEnabledKey()] = enabled }; _uiState.value = _uiState.value.copy(trailerSoundEnabled = enabled); syncLocalStateToCloud(silent = true) }
     }
 
+    fun setTrailerInCards(enabled: Boolean) {
+        viewModelScope.launch { context.settingsDataStore.edit { it[trailerInCardsKey()] = enabled }; _uiState.value = _uiState.value.copy(trailerInCards = enabled); syncLocalStateToCloud(silent = true) }
+    }
+
     fun cycleTrailerDelay() {
         val next = when (_uiState.value.trailerDelaySeconds) {
             0 -> 1
@@ -1521,6 +1530,31 @@ class SettingsViewModel @Inject constructor(
             runCatching {
                 catalogRepository.syncAddonCatalogs(addonsAfterToggle)
             }
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun moveAddonUp(addonId: String) {
+        moveAddon(addonId, moveUp = true)
+    }
+
+    fun moveAddonDown(addonId: String) {
+        moveAddon(addonId, moveUp = false)
+    }
+
+    private fun moveAddon(addonId: String, moveUp: Boolean) {
+        viewModelScope.launch {
+            val moved = if (moveUp) {
+                streamRepository.moveAddonUp(addonId)
+            } else {
+                streamRepository.moveAddonDown(addonId)
+            }
+            if (!moved) return@launch
+            val addonsAfterMove = streamRepository.installedAddons.first()
+            runCatching {
+                catalogRepository.syncAddonCatalogs(addonsAfterMove)
+            }
+            _uiState.value = _uiState.value.copy(addons = addonsAfterMove)
             syncLocalStateToCloud(silent = true)
         }
     }
@@ -2551,16 +2585,20 @@ class SettingsViewModel @Inject constructor(
 
     fun syncLocalStateToCloud(silent: Boolean = false, force: Boolean = false) {
         if (!force && !_uiState.value.isLoggedIn) return
-        if (authRepository.getCurrentUserId().isNullOrBlank()) return
-        cloudSyncRepository.markLocalStateDirty()
         viewModelScope.launch {
+            if (!ensureCloudSyncSession()) return@launch
+            if (force) {
+                cloudSyncRepository.markLocalStateDirtyNow()
+            } else {
+                cloudSyncRepository.markLocalStateDirty()
+            }
             if (!force) {
                 delay(350)
             }
-            var result = cloudSyncRepository.pushToCloud()
+            var result = cloudSyncRepository.pushToCloud(force = force)
             if (result.isFailure) {
                 delay(1200)
-                result = cloudSyncRepository.pushToCloud()
+                result = cloudSyncRepository.pushToCloud(force = force)
             }
 
             if (!silent && result.isSuccess) {
@@ -2590,6 +2628,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isForceCloudSyncing = true,
+                lastCloudSyncStatus = "Starting cloud upload...",
                 toastMessage = "Forcing cloud sync...",
                 toastType = ToastType.INFO
             )
@@ -2597,7 +2636,8 @@ class SettingsViewModel @Inject constructor(
             if (!ensureCloudSyncSession()) {
                 _uiState.value = _uiState.value.copy(
                     isForceCloudSyncing = false,
-                    toastMessage = "Sign in to ARVIO Cloud first",
+                    lastCloudSyncStatus = "Cloud session expired. Reconnect ARVIO Cloud, then sync again.",
+                    toastMessage = "Reconnect ARVIO Cloud to sync",
                     toastType = ToastType.INFO
                 )
                 return@launch
@@ -2605,13 +2645,15 @@ class SettingsViewModel @Inject constructor(
 
             // Push local state first (30s timeout), then pull remote state so this device ends
             // with the server-authoritative snapshot after upload.
+            cloudSyncRepository.markLocalStateDirtyNow()
             var pushResult = withTimeoutOrNull(30_000L) {
-                cloudSyncRepository.pushToCloud()
+                cloudSyncRepository.pushLocalSnapshotToCloud()
             }
             if (pushResult == null) {
                 _uiState.value = _uiState.value.copy(
                     isForceCloudSyncing = false,
-                    toastMessage = "Cloud sync upload timed out — try again",
+                    lastCloudSyncStatus = "Upload timed out before cloud confirmed it",
+                    toastMessage = "Cloud sync upload timed out - try again",
                     toastType = ToastType.ERROR
                 )
                 return@launch
@@ -2619,13 +2661,15 @@ class SettingsViewModel @Inject constructor(
             if (pushResult.isFailure) {
                 delay(1200)
                 pushResult = withTimeoutOrNull(30_000L) {
-                    cloudSyncRepository.pushToCloud()
+                    cloudSyncRepository.pushLocalSnapshotToCloud()
                 }
             }
             if (pushResult == null || pushResult.isFailure) {
+                val uploadError = pushResult?.exceptionOrNull()?.message ?: "Cloud sync failed while uploading"
                 _uiState.value = _uiState.value.copy(
                     isForceCloudSyncing = false,
-                    toastMessage = pushResult?.exceptionOrNull()?.message ?: "Cloud sync failed while uploading",
+                    lastCloudSyncStatus = "Upload failed: ${uploadError.take(120)}",
+                    toastMessage = uploadError,
                     toastType = ToastType.ERROR
                 )
                 return@launch
@@ -2651,6 +2695,11 @@ class SettingsViewModel @Inject constructor(
 
             _uiState.value = _uiState.value.copy(
                 isForceCloudSyncing = false,
+                lastCloudSyncStatus = when (restoreResult) {
+                    CloudRestoreResult.RESTORED -> "Cloud sync complete and verified"
+                    CloudRestoreResult.NO_BACKUP -> "Cloud upload complete; no remote restore was needed"
+                    CloudRestoreResult.FAILED -> "Upload complete, but restore failed"
+                },
                 toastMessage = when (restoreResult) {
                     CloudRestoreResult.RESTORED -> "Cloud sync complete"
                     CloudRestoreResult.NO_BACKUP -> "Cloud sync complete (no backup to restore)"
@@ -2666,14 +2715,13 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun ensureCloudSyncSession(): Boolean {
-        if (authRepository.getCurrentUserId().isNullOrBlank()) {
+        if (authRepository.hasValidCloudSyncSession()) {
+            return true
+        }
+        if (authRepository.getCurrentUserIdForSync().isNullOrBlank()) {
             authRepository.checkAuthState()
         }
-        if (authRepository.getCurrentUserId().isNullOrBlank()) {
-            authRepository.getAccessToken()
-            authRepository.checkAuthState()
-        }
-        return authRepository.getCurrentUserId().isNullOrBlank().not()
+        return authRepository.hasValidCloudSyncSession()
     }
 
     private suspend fun restoreCloudStateToLocalInternal(

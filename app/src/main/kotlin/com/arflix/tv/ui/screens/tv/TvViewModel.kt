@@ -35,6 +35,9 @@ private const val EpgAttemptedStateLimit = 2_400
 private const val LargeIptvListChannelCount = 10_000
 private const val StandardPriorityEpgLimit = 3_200
 private const val LargeListPriorityCacheLimit = 360
+private const val LargeListFocusedNetworkEpgLimit = 24
+private const val LargeListFavoriteEpgPasses = 12
+private const val LargeListFavoritePrefetchLookahead = 28
 private const val RichCatchupRecentTarget = 6
 private const val CatchupHistoryWindowMs = 48L * 60L * 60_000L
 private const val RichCatchupRefreshThrottleMs = 45_000L
@@ -190,7 +193,7 @@ class TvViewModel @Inject constructor(
                     // will request guide data on demand once the user lands
                     // there, instead of broad startup sweeps.
                     if (iptvRepository.isSnapshotStale(cached)) {
-                        refresh(force = false, showLoading = false, forceEpg = false)
+                        System.err.println("[EPG] Startup: using stale warm cache without blocking TV page (age=${epgAgeMs / 1000}s)")
                     } else {
                         System.err.println("[EPG] Startup: using warm cached EPG (age=${epgAgeMs / 1000}s)")
                     }
@@ -351,9 +354,20 @@ class TvViewModel @Inject constructor(
                     )
                 } ?: throw IllegalStateException("IPTV load timed out")
             }.onSuccess { snapshot ->
+                val currentState = _uiState.value
+                if (currentState.isConfigured && snapshot.channels.isEmpty() && currentState.snapshot.channels.isNotEmpty()) {
+                    System.err.println(
+                        "[TV] Ignoring transient empty IPTV snapshot (configured=${
+                            currentState.isConfigured
+                        }) pending forced reload"
+                    )
+                    pendingForcedReload = true
+                    // Keep the last known channels visible; avoid blanking TV page if a
+                    // network or parse hiccup returns an empty result.
+                    return@onSuccess
+                }
                 cachedEnrichedChannels = null
                 cachedChannelsSignature = null
-                val currentState = _uiState.value
                 val mergedSnapshot = mergeIncomingSnapshotWithCurrentGuide(snapshot, currentState)
                 val cappedSnapshot = capLargeListGuideSnapshot(
                     snapshot = mergedSnapshot,
@@ -374,11 +388,6 @@ class TvViewModel @Inject constructor(
                 startFullEpgWarmup()
                 startCompleteEpgBackfill()
                 warmXtreamVodCache()
-                if (!force && _uiState.value.isConfigured && snapshot.channels.isEmpty()) {
-                    // Soft refresh returned empty even though IPTV is configured:
-                    // schedule one forced reload to bypass stale in-memory paths.
-                    pendingForcedReload = true
-                }
             }.onFailure { error ->
                 AppLogger.recordException(
                     throwable = error,
@@ -414,6 +423,22 @@ class TvViewModel @Inject constructor(
                     maybeWarmStartupGuide()
                     startFullEpgWarmup()
                 } else {
+                    val currentState = _uiState.value
+                    if (currentState.isConfigured && currentState.snapshot.channels.isNotEmpty()) {
+                        // Preserve existing data on transient failures to avoid the TV page
+                        // disappearing for long durations when a refresh request errors.
+                        System.err.println(
+                            "[TV] Keeping last known IPTV snapshot after refresh failure: ${error.message.orEmpty()}"
+                        )
+                        pendingForcedReload = true
+                        _uiState.value = currentState.copy(
+                            isLoading = false,
+                            error = error.message ?: "Failed to load IPTV",
+                            loadingMessage = null,
+                            loadingPercent = 0
+                        )
+                        return@onFailure
+                    }
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         error = error.message ?: "Failed to load IPTV",
@@ -631,6 +656,11 @@ class TvViewModel @Inject constructor(
         )
         val keepIds = LinkedHashSet<String>(LargeListPriorityCacheLimit + 180)
         priorityIds.forEach(keepIds::add)
+        snapshot.favoriteChannels
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .forEach { keepIds.add(it) }
         keepChannelIds
             .asSequence()
             .filter { it.isNotBlank() }
@@ -659,7 +689,40 @@ class TvViewModel @Inject constructor(
         )
     }
 
+    // Every TvUiState emission re-executes the (very large, interpreter-only)
+    // LiveTvScreen composition — several hundred ms on a TV box. The per-channel
+    // loading/attempted spinner bookkeeping used to emit a full state copy on each
+    // transition, so one focus change produced 5-8 emissions = multi-second
+    // main-thread stalls (and ANR kills under sustained d-pad navigation). For
+    // large playlists we skip these purely-cosmetic emissions; guide cells simply
+    // go from "pending" to populated when the data merge lands (1 emission).
+    private fun shouldEmitEpgSpinnerState(): Boolean =
+        !isActiveLargeIptvList()
+
+    private fun isActiveLargeIptvList(): Boolean {
+        val snapshotCount = _uiState.value.snapshot.channels.size
+        if (isLargeIptvList(snapshotCount)) return true
+        return runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0) > 10_000
+    }
+
+    /**
+     * Resolve a channel by id without scanning the full snapshot list. For large
+     * playlists a `firstOrNull` over 50k+ channels ran per focus change on the main
+     * thread; the SQLite channel store answers the same lookup with an indexed query.
+     */
+    private fun lookupChannelById(state: TvUiState, id: String): IptvChannel? {
+        if (id.isBlank()) return null
+        return if (isLargeIptvList(state.snapshot.channels.size) ||
+            runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0) > 10_000
+        ) {
+            iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
+        } else {
+            state.snapshot.channels.firstOrNull { it.id == id }
+        }
+    }
+
     private fun markEpgLoading(channelIds: Collection<String>) {
+        if (!shouldEmitEpgSpinnerState()) return
         val ids = channelIds.asSequence().filter { it.isNotBlank() }.take(EpgLoadingStateLimit).toSet()
         if (ids.isEmpty()) return
         val current = _uiState.value
@@ -672,6 +735,7 @@ class TvViewModel @Inject constructor(
     }
 
     private fun clearEpgLoading(channelIds: Collection<String>) {
+        if (!shouldEmitEpgSpinnerState()) return
         val ids = channelIds.asSequence().filter { it.isNotBlank() }.toSet()
         if (ids.isEmpty()) return
         val current = _uiState.value
@@ -679,6 +743,7 @@ class TvViewModel @Inject constructor(
     }
 
     private fun finishEpgAttempt(channelIds: Collection<String>) {
+        if (!shouldEmitEpgSpinnerState()) return
         val ids = channelIds.asSequence().filter { it.isNotBlank() }.toSet()
         if (ids.isEmpty()) return
         val current = _uiState.value
@@ -695,8 +760,15 @@ class TvViewModel @Inject constructor(
         return ids.toList().takeLast(limit).toSet()
     }
 
-    private fun claimEpgNetworkRefresh(channelIds: Collection<String>): Set<String> {
+    private fun claimEpgNetworkRefresh(
+        channelIds: Collection<String>,
+        allowLargeListFocusedRefresh: Boolean = false
+    ): Set<String> {
         if (channelIds.isEmpty()) return emptySet()
+        if (isActiveLargeIptvList() && !allowLargeListFocusedRefresh) {
+            System.err.println("[EPG-Refresh] Skipping network prefetch for large paged TV list")
+            return emptySet()
+        }
         return synchronized(epgNetworkRefreshLock) {
             channelIds
                 .asSequence()
@@ -722,6 +794,13 @@ class TvViewModel @Inject constructor(
     fun setLiveTvPlaybackActive(active: Boolean) {
         if (liveTvPlaybackActive == active) return
         liveTvPlaybackActive = active
+        // The full-guide backfill is deferred while a channel preview is playing.
+        // Measured reason: filling all ~10k guide-capable channels' EPG concurrently
+        // with an interactive UI exceeds this device's 384MB heap cap and crashes
+        // during navigation. Full all-channels coverage at this scale needs the
+        // backend EPG service; on-device we keep visible/priority-channel EPG, which
+        // stays within budget. (The backfill that DOES run when playback is idle now
+        // streams in bounded batches — see fetchXtreamFullEpg — so it can't OOM.)
         if (active) {
             deferredCompleteEpgBackfillJob?.cancel()
             deferredCompleteEpgBackfillJob = null
@@ -889,11 +968,16 @@ class TvViewModel @Inject constructor(
     ) {
         val state = _uiState.value
         val channels = state.snapshot.channels
-        val largeList = isLargeIptvList(channels.size)
+        val largeList = isActiveLargeIptvList()
         if (!state.isConfigured || channels.isEmpty()) return
         if (!hasNetworkEpgSource(state.config)) return
         if (liveTvPlaybackActive) {
             deferCompleteEpgBackfill(priorityChannelIds)
+            return
+        }
+        if (largeList) {
+            setEpgBackfillInProgress(false)
+            System.err.println("[EPG-Complete] Skipping on-device full guide backfill for large playlist; visible guide loads on demand")
             return
         }
         val indexedGuideChannels = if (largeList) {
@@ -1114,13 +1198,12 @@ class TvViewModel @Inject constructor(
     }
 
     private fun requestVisibleCompleteEpgBackfill(priorityChannelIds: Collection<String> = emptyList()) {
-        val isLargeList = isLargeIptvList(_uiState.value.snapshot.channels.size)
+        val isLargeList = isActiveLargeIptvList()
         val now = System.currentTimeMillis()
         if (now - lastVisibleForcedCompleteEpgAt < 60_000L) return
         lastVisibleForcedCompleteEpgAt = now
         if (isLargeList) {
-            System.err.println("[EPG-Complete] Visible guide unresolved; ensuring large-list full XMLTV background pass")
-            startCompleteEpgBackfill(force = true, priorityChannelIds = priorityChannelIds)
+            System.err.println("[EPG-Complete] Visible guide unresolved on large paged list; skip on-device XMLTV during TV page")
             return
         }
         startCompleteEpgBackfill(force = true, priorityChannelIds = priorityChannelIds)
@@ -1168,11 +1251,12 @@ class TvViewModel @Inject constructor(
         channelIds: List<String>,
         selectedChannelId: String?,
         eagerLimit: Int = 96,
-        backgroundLimit: Int = 640
+        backgroundLimit: Int = 640,
+        allowFocusedNetworkRefresh: Boolean = false
     ) {
         if (channelIds.isEmpty()) return
-        val largeList = isLargeIptvList(_uiState.value.snapshot.channels.size)
-        val firstPaintLimit = if (largeList) 18 else 28
+        val largeList = isActiveLargeIptvList()
+        val firstPaintLimit = if (largeList) 8 else 28
         val selectedId = selectedChannelId
             ?.takeIf { it in channelIds }
             ?: channelIds.firstOrNull()
@@ -1185,6 +1269,8 @@ class TvViewModel @Inject constructor(
         if (orderedIds.isEmpty()) return
 
         val currentState = _uiState.value
+        val favoriteIds = currentState.snapshot.favoriteChannels
+            .toHashSet()
         val currentNowNext = currentState.snapshot.nowNext
         val missingCount = orderedIds.count { id ->
             !hasUsefulVisibleGuideData(currentNowNext[id])
@@ -1211,7 +1297,7 @@ class TvViewModel @Inject constructor(
         lastVisibleEpgRefreshAt = now
         val requestLimit = maxOf(firstPaintLimit, eagerLimit, backgroundLimit)
             .coerceAtMost(orderedIds.size)
-            .coerceAtMost(if (largeList) 112 else 240)
+            .coerceAtMost(if (largeList) 36 else 240)
         val missingIds = orderedIds
             .filterNot { id ->
                 hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id])
@@ -1219,11 +1305,120 @@ class TvViewModel @Inject constructor(
             .take(requestLimit)
         if (missingIds.isEmpty()) return
 
+        if (largeList) {
+            viewModelScope.launch {
+                val firstPaintIds = missingIds
+                    .take(maxOf(firstPaintLimit, eagerLimit).coerceAtMost(orderedIds.size))
+                    .toCollection(LinkedHashSet())
+                val startedAt = System.currentTimeMillis()
+                markEpgLoading(firstPaintIds)
+                refreshGuideFromCache(firstPaintIds)
+                val resolved = firstPaintIds.count { id ->
+                    hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id])
+                }
+                System.err.println(
+                    "[EPG-StartupCache] visible=$resolved/${firstPaintIds.size} " +
+                        "selected=${selectedId.orEmpty()} in ${System.currentTimeMillis() - startedAt}ms"
+                )
+                val unresolved = firstPaintIds
+                    .filterNot { id -> hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id]) }
+                    .toCollection(LinkedHashSet())
+                val favoriteUnresolved = unresolved
+                    .asSequence()
+                    .filter { favoriteIds.contains(it) }
+                    .take(LargeListFavoriteEpgPasses)
+                    .toCollection(LinkedHashSet())
+                if (favoriteUnresolved.isNotEmpty()) {
+                    System.err.println(
+                        "[EPG-StartupCache] large favorite network refresh=${favoriteUnresolved.size}/${unresolved.size}"
+                    )
+                    val claimedIds = claimEpgNetworkRefresh(
+                        favoriteUnresolved,
+                        allowLargeListFocusedRefresh = true
+                    )
+                    val refreshed = if (claimedIds.isNotEmpty()) {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    iptvRepository.refreshEpgForChannels(
+                                        claimedIds,
+                                        maxChannels = claimedIds.size,
+                                        preferFullCatchupHistory = false
+                                    )
+                                }.getOrNull()
+                            }
+                        } finally {
+                            releaseEpgNetworkRefresh(claimedIds)
+                        }
+                    } else {
+                        null
+                    }
+                    if (!refreshed.isNullOrEmpty()) {
+                        mergeNowNext(refreshed)
+                    }
+                }
+                val remainingUnresolved = unresolved - favoriteUnresolved
+                val focusedRefreshIds = if (allowFocusedNetworkRefresh) {
+                    remainingUnresolved
+                } else if (remainingUnresolved.isNotEmpty()) {
+                    // A large IPTV list can have an empty local EPG index on the
+                    // first run after migration. Fetch a tiny visible batch so the
+                    // guide does not sit on "Guide pending" forever, but keep it
+                    // capped to avoid hurting navigation/playback.
+                    remainingUnresolved.take(LargeListFocusedNetworkEpgLimit)
+                } else {
+                    emptyList()
+                }
+                if (focusedRefreshIds.isNotEmpty()) {
+                    System.err.println(
+                        "[EPG-StartupCache] focused network refresh=${focusedRefreshIds.size}/${unresolved.size}"
+                    )
+                    val claimedIds = claimEpgNetworkRefresh(
+                        focusedRefreshIds,
+                        allowLargeListFocusedRefresh = true
+                    )
+                    val refreshed = if (claimedIds.isNotEmpty()) {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    iptvRepository.refreshEpgForChannels(
+                                        claimedIds,
+                                        maxChannels = claimedIds.size,
+                                        preferFullCatchupHistory = false
+                                    )
+                                }.getOrNull()
+                            }
+                        } finally {
+                            releaseEpgNetworkRefresh(claimedIds)
+                        }
+                    } else {
+                        null
+                    }
+                    if (!refreshed.isNullOrEmpty()) {
+                        mergeNowNext(refreshed)
+                    }
+                }
+                val delayedFavoritePass = orderedIds
+                    .asSequence()
+                    .filter { favoriteIds.contains(it) }
+                    .filterNot { it in firstPaintIds }
+                    .filterNot { hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[it]) }
+                    .take(LargeListFavoritePrefetchLookahead)
+                    .toList()
+                if (delayedFavoritePass.isNotEmpty()) {
+                    enqueueVisibleEpgRefresh(delayedFavoritePass, selectedId)
+                }
+                finishEpgAttempt(firstPaintIds.filterNot { id -> hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id]) })
+                clearEpgLoading(firstPaintIds)
+            }
+            return
+        }
+
         markEpgLoading(missingIds)
         enqueueVisibleEpgRefresh(missingIds, selectedId)
     }
 
-    fun refreshCurrentChannelEpg(channelId: String?) {
+    fun refreshCurrentChannelEpg(channelId: String?, forceNetworkForLargeList: Boolean = false) {
         val id = channelId?.trim().orEmpty()
         if (id.isBlank()) return
         val now = System.currentTimeMillis()
@@ -1240,11 +1435,25 @@ class TvViewModel @Inject constructor(
             refreshGuideFromCache(setOf(id))
             val afterCacheState = _uiState.value
             val channel = afterCacheState.channelLookup[id]
-                ?: afterCacheState.snapshot.channels.firstOrNull { it.id == id }
+                ?: lookupChannelById(afterCacheState, id)
             val cachedGuide = afterCacheState.snapshot.nowNext[id]
+            val largeList = isActiveLargeIptvList()
+            val currentFavoriteIds = afterCacheState.snapshot.favoriteChannels.toSet()
             val needsCatchupHistory = supportsCatchup(channel) && !hasRecentCatchupHistory(channel, cachedGuide)
-            val needsAiredHistory = !hasRecentAiredHistory(cachedGuide)
+            val needsAiredHistory = !largeList && !hasRecentAiredHistory(cachedGuide)
             val needsFullHistory = needsCatchupHistory || needsAiredHistory
+            if (largeList) {
+                val cacheGuide = afterCacheState.snapshot.nowNext[id]
+                val shouldNetwork = forceNetworkForLargeList || currentFavoriteIds.contains(id)
+                System.err.println(
+                    "[EPG-Current] largeList channel=$id cached=${hasUsefulVisibleGuideData(cacheGuide)} " +
+                        "force=$forceNetworkForLargeList fav=${currentFavoriteIds.contains(id)}"
+                )
+                if (!shouldNetwork || (hasRichSelectedGuideData(cacheGuide) && !needsFullHistory)) {
+                    clearEpgLoading(setOf(id))
+                    return@launch
+                }
+            }
             if (hasRichSelectedGuideData(cachedGuide) && !needsFullHistory) {
                 clearEpgLoading(setOf(id))
                 return@launch
@@ -1253,7 +1462,10 @@ class TvViewModel @Inject constructor(
                 "[EPG-Current] refreshing channel=$id fullHistory=$needsFullHistory " +
                     "catchup=$needsCatchupHistory aired=$needsAiredHistory recent=${recentCatchupCount(cachedGuide)}"
             )
-            val claimedIds = claimEpgNetworkRefresh(setOf(id))
+            val claimedIds = claimEpgNetworkRefresh(
+                setOf(id),
+                allowLargeListFocusedRefresh = forceNetworkForLargeList || currentFavoriteIds.contains(id)
+            )
             if (claimedIds.isEmpty()) {
                 clearEpgLoading(setOf(id))
                 return@launch
@@ -1285,7 +1497,7 @@ class TvViewModel @Inject constructor(
         val now = System.currentTimeMillis()
         val current = _uiState.value
         val channel = current.channelLookup[id]
-            ?: current.snapshot.channels.firstOrNull { it.id == id }
+            ?: lookupChannelById(current, id)
         if (!supportsCatchup(channel)) return
         if (hasRecentCatchupHistory(channel, current.snapshot.nowNext[id], now)) return
         val lastRefreshAt = catchupHistoryRefreshAt[id] ?: 0L
@@ -1306,7 +1518,7 @@ class TvViewModel @Inject constructor(
             refreshGuideFromCache(setOf(id))
             val afterCache = _uiState.value
             val afterCacheChannel = afterCache.channelLookup[id]
-                ?: afterCache.snapshot.channels.firstOrNull { it.id == id }
+                ?: lookupChannelById(afterCache, id)
             if (hasRecentCatchupHistory(afterCacheChannel, afterCache.snapshot.nowNext[id])) {
                 System.err.println(
                     "[EPG-Catchup] cache satisfied channel=$id " +
@@ -1315,7 +1527,10 @@ class TvViewModel @Inject constructor(
                 clearEpgLoading(setOf(id))
                 return@launch
             }
-            val claimedIds = claimEpgNetworkRefresh(setOf(id))
+            val claimedIds = claimEpgNetworkRefresh(
+                setOf(id),
+                allowLargeListFocusedRefresh = true
+            )
             if (claimedIds.isEmpty()) {
                 clearEpgLoading(setOf(id))
                 return@launch
@@ -1387,12 +1602,49 @@ class TvViewModel @Inject constructor(
                 val batchSet = batch.toCollection(LinkedHashSet())
                 markEpgLoading(batchSet)
                 runCatching {
-                    val cacheLoaded = kotlinx.coroutines.withTimeoutOrNull(if (isLargeIptvList(_uiState.value.snapshot.channels.size)) 900L else 1_800L) {
+                    val activeLargeList = isActiveLargeIptvList()
+                    val cacheLoaded = kotlinx.coroutines.withTimeoutOrNull(if (activeLargeList) 900L else 1_800L) {
                         refreshGuideFromCache(batchSet)
                         true
                     } == true
                     if (!cacheLoaded) {
                         System.err.println("[EPG-Category] cache lookup skipped after timeout for ${batchSet.size} visible channels")
+                    }
+                    if (activeLargeList) {
+                        val resolved = batchSet.count { id -> hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id]) }
+                        System.err.println("[EPG-Category] large cache-only resolved=$resolved/${batchSet.size}")
+                        val unresolved = batchSet
+                            .filterNot { id -> hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id]) }
+                            .toCollection(LinkedHashSet())
+                        if (unresolved.isNotEmpty() && batchSet.size <= LargeListFocusedNetworkEpgLimit) {
+                            System.err.println("[EPG-Category] large focused network refresh=${unresolved.size}")
+                            val claimedIds = claimEpgNetworkRefresh(
+                                unresolved,
+                                allowLargeListFocusedRefresh = true
+                            )
+                            val refreshed = if (claimedIds.isNotEmpty()) {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            iptvRepository.refreshEpgForChannels(
+                                                claimedIds,
+                                                maxChannels = claimedIds.size,
+                                                preferFullCatchupHistory = false
+                                            )
+                                        }.getOrNull()
+                                    }
+                                } finally {
+                                    releaseEpgNetworkRefresh(claimedIds)
+                                }
+                            } else {
+                                null
+                            }
+                            if (!refreshed.isNullOrEmpty()) {
+                                mergeNowNext(refreshed)
+                            }
+                        }
+                        finishEpgAttempt(batchSet.filterNot { id -> hasUsefulVisibleGuideData(_uiState.value.snapshot.nowNext[id]) })
+                        return@runCatching
                     }
 
                     val selectedMissingId = drain.selectedId
@@ -1469,7 +1721,7 @@ class TvViewModel @Inject constructor(
                     val waitingForFullGuide = current.epgBackfillInProgress ||
                         (hasGuideSource && !fullGuideRecentlyCompleted)
                     if (waitingForFullGuide) {
-                        if (isLargeIptvList(current.snapshot.channels.size)) {
+                        if (isActiveLargeIptvList()) {
                             finishEpgAttempt(unresolvedIds)
                         } else {
                             clearEpgLoading(unresolvedIds)
@@ -1526,42 +1778,77 @@ class TvViewModel @Inject constructor(
     }
 
     fun moveGroupUp(groupName: String) {
+        moveGroupUp(null, groupName)
+    }
+
+    fun moveGroupUp(playlistId: String?, groupName: String) {
         viewModelScope.launch {
-            val current = currentVisiblePlaylistGroups()
-            val config = iptvRepository.observeConfig().first()
-            val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
-            activePlaylists.forEach { playlistId ->
-                iptvRepository.moveGroupUp(playlistId, groupName, current)
+            val targetPlaylistId = playlistId?.trim().orEmpty()
+            if (targetPlaylistId.isNotBlank()) {
+                iptvRepository.moveGroupUp(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
+            } else {
+                val config = iptvRepository.observeConfig().first()
+                val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
+                activePlaylists.forEach { activePlaylistId ->
+                    iptvRepository.moveGroupUp(activePlaylistId, groupName, currentVisiblePlaylistGroups(activePlaylistId))
+                }
             }
             scheduleIptvCloudSync()
         }
     }
 
     fun moveGroupToTop(groupName: String) {
+        moveGroupToTop(null, groupName)
+    }
+
+    fun moveGroupToTop(playlistId: String?, groupName: String) {
         viewModelScope.launch {
-            val current = currentVisiblePlaylistGroups()
-            val config = iptvRepository.observeConfig().first()
-            val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
-            activePlaylists.forEach { playlistId ->
-                iptvRepository.moveGroupToTop(playlistId, groupName, current)
+            val targetPlaylistId = playlistId?.trim().orEmpty()
+            if (targetPlaylistId.isNotBlank()) {
+                iptvRepository.moveGroupToTop(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
+            } else {
+                val config = iptvRepository.observeConfig().first()
+                val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
+                activePlaylists.forEach { activePlaylistId ->
+                    iptvRepository.moveGroupToTop(activePlaylistId, groupName, currentVisiblePlaylistGroups(activePlaylistId))
+                }
             }
             scheduleIptvCloudSync()
         }
     }
 
     fun moveGroupDown(groupName: String) {
+        moveGroupDown(null, groupName)
+    }
+
+    fun moveGroupDown(playlistId: String?, groupName: String) {
         viewModelScope.launch {
-            val current = currentVisiblePlaylistGroups()
-            val config = iptvRepository.observeConfig().first()
-            val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
-            activePlaylists.forEach { playlistId ->
-                iptvRepository.moveGroupDown(playlistId, groupName, current)
+            val targetPlaylistId = playlistId?.trim().orEmpty()
+            if (targetPlaylistId.isNotBlank()) {
+                iptvRepository.moveGroupDown(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
+            } else {
+                val config = iptvRepository.observeConfig().first()
+                val activePlaylists = config.playlists.filter { it.enabled }.map { it.id }
+                activePlaylists.forEach { activePlaylistId ->
+                    iptvRepository.moveGroupDown(activePlaylistId, groupName, currentVisiblePlaylistGroups(activePlaylistId))
+                }
             }
             scheduleIptvCloudSync()
         }
     }
 
-    private fun currentVisiblePlaylistGroups(): List<String> {
+    private fun currentVisiblePlaylistGroups(playlistId: String? = null): List<String> {
+        val targetPlaylistId = playlistId?.trim().orEmpty()
+        if (targetPlaylistId.isNotBlank() && iptvRepository.pagedChannelsReady()) {
+            val hidden = _uiState.value.snapshot.hiddenGroups.mapTo(HashSet()) { it.trim() }
+            return iptvRepository.pagedPlaylistGroupCounts()
+                .asSequence()
+                .filter { (id, _, _) -> id == targetPlaylistId }
+                .map { (_, group, _) -> group.trim() }
+                .filter { it.isNotBlank() && it !in hidden }
+                .distinct()
+                .toList()
+        }
         val snapshot = _uiState.value.snapshot
         val hidden = snapshot.hiddenGroups.mapTo(HashSet()) { it.trim() }
         return snapshot.grouped.keys
@@ -1699,7 +1986,7 @@ class TvViewModel @Inject constructor(
     private fun maybeWarmStartupGuide() {
         val state = _uiState.value
         if (state.channelsByGroup.isEmpty()) return
-        val largeList = isLargeIptvList(state.snapshot.channels.size)
+        val largeList = isActiveLargeIptvList()
 
         val warmGroups = buildStartupWarmGroups(state)
         if (warmGroups.isEmpty()) return
@@ -1747,10 +2034,10 @@ class TvViewModel @Inject constructor(
         iptvCloudSyncJob?.cancel()
         iptvCloudSyncJob = viewModelScope.launch(Dispatchers.IO) {
             kotlinx.coroutines.delay(350L)
-            val firstAttempt = runCatching { cloudSyncRepository.pushToCloud() }.getOrNull()
+            val firstAttempt = runCatching { cloudSyncRepository.pushToCloud(force = true) }.getOrNull()
             if (firstAttempt?.isFailure != false) {
                 kotlinx.coroutines.delay(1_200L)
-                runCatching { cloudSyncRepository.pushToCloud() }
+                runCatching { cloudSyncRepository.pushToCloud(force = true) }
             }
         }
     }

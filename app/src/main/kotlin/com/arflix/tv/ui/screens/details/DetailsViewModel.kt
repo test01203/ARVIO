@@ -1457,7 +1457,7 @@ class DetailsViewModel @Inject constructor(
                             } else {
                                 // Plugin finished loading (with or without results)
                                 val updatedNames = current.loadingPluginNames - scraperInfo.name
-                                if (!results.isNullOrEmpty()) {
+                                if (results.isNotEmpty()) {
                                     val pluginStreams = results.map { it.toStreamSource() }
                                     val merged = sortPlayableStreamsFirst(
                                         (current.streams + pluginStreams)

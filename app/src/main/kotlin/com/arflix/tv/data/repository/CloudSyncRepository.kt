@@ -136,6 +136,24 @@ class CloudSyncRepository @Inject constructor(
         return hasMeaningfulLocalProfiles(profileRepository.getProfiles())
     }
 
+    private fun shouldRestoreRemoteBeforePush(localPayload: String, remotePayload: String): Boolean {
+        val localRank = accountSyncPayloadRestoreRank(localPayload)
+        val remoteRank = accountSyncPayloadRestoreRank(remotePayload)
+        val localProfileCount = cloudPayloadProfileCount(localPayload)
+        val remoteProfileCount = cloudPayloadProfileCount(remotePayload)
+
+        if (
+            localProfileCount != null &&
+            remoteProfileCount != null &&
+            remoteProfileCount > localProfileCount &&
+            remoteRank >= localRank
+        ) {
+            return true
+        }
+
+        return remoteRank >= 70 && localRank < 70
+    }
+
     private fun mergeAddonsForSharedRestore(addonLists: Iterable<List<Addon>>): List<Addon> {
         val merged = LinkedHashMap<String, Addon>()
         addonLists.flatten().forEach { addon ->
@@ -254,6 +272,7 @@ class CloudSyncRepository @Inject constructor(
         val trailerAutoPlay: Boolean = false,
         val trailerSoundEnabled: Boolean = false,
         val trailerDelaySeconds: Int = 2,
+        val trailerInCards: Boolean = true,
         val clockFormat: String = "24h",
         val showBudget: Boolean = true,
         val showLoadingStats: Boolean? = null,
@@ -278,6 +297,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "trailer_auto_play")
     private fun trailerSoundEnabledKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "trailer_sound_enabled")
+    private fun trailerInCardsKeyFor(profileId: String) =
+        profileManager.profileBooleanKeyFor(profileId, "trailer_in_cards")
     private fun trailerDelayKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "trailer_delay_seconds")
     private fun clockFormatKeyFor(profileId: String) =
@@ -415,6 +436,7 @@ class CloudSyncRepository @Inject constructor(
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,
                         trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 2,
+                        trailerInCards = prefs[trailerInCardsKeyFor(profile.id)] ?: true,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
                         showLoadingStats = prefs[showLoadingStatsKeyFor(profile.id)] ?: true,
@@ -624,13 +646,20 @@ class CloudSyncRepository @Inject constructor(
     //  PUSH LOCAL STATE TO CLOUD
     // ══════════════════════════════════════════════════════════
 
-    suspend fun pushToCloud(): Result<Unit> = cloudSyncMutex.withLock {
-        pushToCloudLocked()
+    suspend fun pushToCloud(force: Boolean = false): Result<Unit> = cloudSyncMutex.withLock {
+        pushToCloudLocked(force = force)
     }
 
-    private suspend fun pushToCloudLocked(): Result<Unit> {
+    suspend fun pushLocalSnapshotToCloud(): Result<Unit> = cloudSyncMutex.withLock {
+        pushToCloudLocked(force = true, allowRemoteRestoreBeforePush = false)
+    }
+
+    private suspend fun pushToCloudLocked(
+        force: Boolean = false,
+        allowRemoteRestoreBeforePush: Boolean = true
+    ): Result<Unit> {
         val now = System.currentTimeMillis()
-        if (pushFailureCount > 0) {
+        if (!force && pushFailureCount > 0) {
             val requiredBackoffMs = (2_000L * (1 shl (pushFailureCount - 1).coerceAtMost(6))).coerceAtMost(300_000L)
             if (now - lastPushAttemptAt < requiredBackoffMs) {
                 AppLogger.breadcrumb(
@@ -643,7 +672,9 @@ class CloudSyncRepository @Inject constructor(
         }
         lastPushAttemptAt = now
 
-        if (authRepository.getCurrentUserId().isNullOrBlank()) {
+        val userId = authRepository.getCurrentUserIdForSync()
+        if (userId.isNullOrBlank()) {
+            Log.w(TAG, "Push skipped: no valid cloud user session dirty=$isPushDirty force=$force")
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "push_skipped_not_logged_in dirty=$isPushDirty",
@@ -665,11 +696,51 @@ class CloudSyncRepository @Inject constructor(
             return Result.failure(it)
         }
 
+        val existingRemotePayload = authRepository.loadAccountSyncPayload()
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+        if (
+            allowRemoteRestoreBeforePush &&
+            existingRemotePayload != null &&
+            shouldRestoreRemoteBeforePush(payload, existingRemotePayload)
+        ) {
+            val localProfileCount = cloudPayloadProfileCount(payload)
+            val remoteProfileCount = cloudPayloadProfileCount(existingRemotePayload)
+            Log.w(
+                TAG,
+                "Push blocked because remote snapshot is richer; local_profiles=$localProfileCount remote_profiles=$remoteProfileCount"
+            )
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "push_blocked_remote_richer local_profiles=$localProfileCount remote_profiles=$remoteProfileCount",
+                severity = "warning"
+            )
+            return runCatching {
+                invalidationBus.suppressDuringRemoteApply {
+                    clearStaleLocalDirtyBeforeRemoteRestore()
+                    applyCloudPayload(existingRemotePayload)
+                }
+                markCloudPayloadApplied(existingRemotePayload, existingRemotePayload.hashCode())
+                clearLocalDirtyAfterSuccessfulPush()
+            }.fold(
+                onSuccess = {
+                    Log.i(TAG, "Restored richer remote snapshot before push")
+                    Result.success(Unit)
+                },
+                onFailure = { error ->
+                    markPushFailedDirty()
+                    pushFailureCount++
+                    Log.w(TAG, "Failed to restore richer remote snapshot before push: ${error.message}", error)
+                    Result.failure(error)
+                }
+            )
+        }
+
         val payloadHash = runCatching {
             JSONObject(payload).apply { remove("updatedAt") }.toString().hashCode()
         }.getOrNull()
 
-        if (payloadHash != null && payloadHash == lastPushedPayloadHash && !isPushDirty && pushFailureCount == 0) {
+        if (!force && payloadHash != null && payloadHash == lastPushedPayloadHash && !isPushDirty && pushFailureCount == 0) {
             AppLogger.breadcrumb(
                 tag = "CloudSync",
                 message = "push_skipped_duplicate_hash",
@@ -686,7 +757,7 @@ class CloudSyncRepository @Inject constructor(
             Log.i(TAG, "Push succeeded size=${payloadSizeBucket(payload)}")
             AppLogger.breadcrumb(
                 tag = "CloudSync",
-                message = "push_success size=${payloadSizeBucket(payload)}",
+                message = "push_success size=${payloadSizeBucket(payload)} user=${userId.take(8)}",
                 severity = "info"
             )
             onPushCompleted?.invoke()
@@ -770,6 +841,20 @@ class CloudSyncRepository @Inject constructor(
                 severity = "info"
             )
             return@withLock RestoreResult.NO_BACKUP
+        }
+
+        val remoteRestoreRank = accountSyncPayloadRestoreRank(payload)
+        val localRestoreRank = runCatching {
+            accountSyncPayloadRestoreRank(buildCloudSnapshotJson())
+        }.getOrDefault(0)
+        if (localRestoreRank > remoteRestoreRank && remoteRestoreRank <= 10) {
+            AppLogger.breadcrumb(
+                tag = "CloudSync",
+                message = "pull_remote_placeholder_seed_local local_rank=$localRestoreRank remote_rank=$remoteRestoreRank",
+                severity = "warning"
+            )
+            val pushResult = pushToCloudLocked()
+            return@withLock if (pushResult.isSuccess) RestoreResult.RESTORED else RestoreResult.FAILED
         }
 
         val cloudProfileCount = cloudPayloadProfileCount(payload)
@@ -979,6 +1064,7 @@ class CloudSyncRepository @Inject constructor(
                         prefs[trailerAutoPlayKeyFor(profileId)] = state.trailerAutoPlay
                         prefs[trailerSoundEnabledKeyFor(profileId)] = state.trailerSoundEnabled
                         prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
+                        prefs[trailerInCardsKeyFor(profileId)] = state.trailerInCards
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
                         state.showLoadingStats?.let { prefs[showLoadingStatsKeyFor(profileId)] = it }

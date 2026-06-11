@@ -331,8 +331,6 @@ fun DetailsScreen(
     LaunchedEffect(
         pendingAutoPlayRequest,
         uiState.isLoadingStreams,
-        uiState.completedAddons,
-        uiState.totalAddons,
         uiState.streams,
         uiState.autoPlayMinQuality,
         autoPlayWaitTick
@@ -343,10 +341,8 @@ fun DetailsScreen(
         val minThreshold = minQualityThreshold(uiState.autoPlayMinQuality)
         val selectedStream = bestAutoPlayStream(validStreams, minThreshold)
         val shouldWaitForSources = shouldWaitForAutoPlaySources(
-            completedAddons = uiState.completedAddons,
-            totalAddons = uiState.totalAddons,
             isLoadingStreams = uiState.isLoadingStreams,
-            hasCandidateStreams = validStreams.isNotEmpty(),
+            selectedStream = selectedStream,
             elapsedMs = SystemClock.elapsedRealtime() - request.requestedAtMs
         )
 
@@ -861,6 +857,7 @@ fun DetailsScreen(
             // Use skeleton loader for better UX
             SkeletonDetailsPage(
                 isTV = mediaType == MediaType.TV,
+                isMobile = isMobile,
                 modifier = Modifier.fillMaxSize()
             )
         } else {

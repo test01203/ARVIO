@@ -119,12 +119,20 @@ class ProfileViewModel @Inject constructor(
                 }
 
                 val userId = state.userId
-                if (lastInitialRestoreUserId == userId || profileRepository.getProfiles().isNotEmpty()) {
+                if (lastInitialRestoreUserId == userId || cloudSyncRepository.hasMeaningfulLocalProfiles()) {
                     return@collect
                 }
 
                 lastInitialRestoreUserId = userId
-                _uiState.value = _uiState.value.copy(isLoading = true)
+                // Keep profile selector responsive while cloud restore runs. If we
+                // already have local profiles, only show them first and restore in
+                // the background.
+                val hasLocalProfiles = runCatching { profileRepository.getProfiles() }
+                    .getOrNull()
+                    ?.isNotEmpty() == true
+                if (!hasLocalProfiles) {
+                    _uiState.value = _uiState.value.copy(isLoading = true)
+                }
 
                 var restoreResult = withContext(Dispatchers.IO) {
                     withTimeoutOrNull(18_000L) {
@@ -217,23 +225,15 @@ class ProfileViewModel @Inject constructor(
                     runCatching { iptvRepository.warmupFromCacheOnly() }
                 }
 
-                // Pull cloud state before the profile screen is allowed to disappear.
-                // If this is launched in this ViewModel after navigation, the job can
-                // be cancelled and profile-scoped Trakt tokens never restore.
-                val restoreResult = withContext(Dispatchers.IO) {
-                    runCatching { cloudSyncRepository.pullFromCloud() }.getOrNull()
-                }
-                if (restoreResult != CloudSyncRepository.RestoreResult.FAILED &&
-                    profileRepository.getActiveProfileId() == profile.id
-                ) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        runCatching { cloudSyncRepository.pushToCloud() }
-                    }
-                }
-
+                // Pull cloud state and push immediately, but in background so navigation stays
+                // instant and responsive after active profile is set.
                 viewModelScope.launch(Dispatchers.IO) {
-                    if (profileRepository.getActiveProfileId() != profile.id) return@launch
-                    runCatching { iptvRepository.warmupFromCacheOnly() }
+                    val restoreResult = runCatching { cloudSyncRepository.pullFromCloud() }.getOrNull()
+                    if (restoreResult != CloudSyncRepository.RestoreResult.FAILED &&
+                        profileRepository.getActiveProfileId() == profile.id
+                    ) {
+                        runCatching { cloudSyncRepository.pushToCloud(force = true) }
+                    }
                 }
 
                 viewModelScope.launch(Dispatchers.IO) {
@@ -353,7 +353,7 @@ class ProfileViewModel @Inject constructor(
             }
             _uiState.value = _uiState.value.copy(showAddDialog = false)
             showToast("Profile created successfully", ToastType.SUCCESS)
-            runCatching { cloudSyncRepository.pushToCloud() }
+            runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
     }
 
@@ -422,7 +422,7 @@ class ProfileViewModel @Inject constructor(
             profileRepository.updateProfile(updatedProfile)
             _uiState.value = _uiState.value.copy(editingProfile = null)
             showToast("Profile updated", ToastType.SUCCESS)
-            runCatching { cloudSyncRepository.pushToCloud() }
+            runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
     }
 
@@ -463,7 +463,7 @@ class ProfileViewModel @Inject constructor(
                 profileManager.setCurrentProfileId("default")
                 profileManager.setCurrentProfileName("default")
             }
-            runCatching { cloudSyncRepository.pushToCloud() }
+            runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
     }
 
@@ -546,7 +546,7 @@ class ProfileViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(editingProfile = updatedProfile)
             hidePinDialog()
             showToast("Profile PIN set successfully", ToastType.SUCCESS)
-            runCatching { cloudSyncRepository.pushToCloud() }
+            runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
     }
 
@@ -556,7 +556,7 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             profileRepository.updateProfile(updatedProfile)
             _uiState.value = _uiState.value.copy(editingProfile = updatedProfile)
-            runCatching { cloudSyncRepository.pushToCloud() }
+            runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
     }
 }

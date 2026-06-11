@@ -151,16 +151,15 @@ class RealtimeSyncManager @Inject constructor(
     private fun connectWebSocket() {
         if (!isRunning.get()) return
 
-        val userId = authRepository.getCurrentUserId()
-        if (userId.isNullOrBlank()) {
-            Log.w(TAG, "Not logged in, skipping WebSocket connection")
-            _syncStatusFlow.value = CloudSyncStatus.NOT_SIGNED_IN
-            scheduleReconnect()
-            return
-        }
-
         _syncStatusFlow.value = CloudSyncStatus.RECONNECTING
         scope.launch {
+            val userId = authRepository.getCurrentUserIdForSync()
+            if (userId.isNullOrBlank()) {
+                Log.w(TAG, "Not logged in, skipping WebSocket connection")
+                _syncStatusFlow.value = CloudSyncStatus.NOT_SIGNED_IN
+                scheduleReconnect()
+                return@launch
+            }
             val accessToken = authRepository.getAccessToken()
             if (accessToken.isNullOrBlank()) {
                 Log.w(TAG, "No access token, skipping WebSocket connection")
@@ -223,7 +222,8 @@ class RealtimeSyncManager @Inject constructor(
     }
 
     private fun joinChannel(ws: WebSocket, userId: String) {
-        // Channel 1: account_sync_state changes
+        // Channel 1: account_sync_state and user_settings changes. user_settings is
+        // a sync fallback mirror, so it must also wake other signed-in devices.
         val accountSyncJoin = JSONObject().apply {
             put("topic", "realtime:account_sync")
             put("event", "phx_join")
@@ -246,6 +246,24 @@ class RealtimeSyncManager @Inject constructor(
                             put("event", "DELETE")
                             put("schema", "public")
                             put("table", "account_sync_state")
+                            put("filter", "user_id=eq.$userId")
+                        })
+                        put(JSONObject().apply {
+                            put("event", "INSERT")
+                            put("schema", "public")
+                            put("table", "user_settings")
+                            put("filter", "user_id=eq.$userId")
+                        })
+                        put(JSONObject().apply {
+                            put("event", "UPDATE")
+                            put("schema", "public")
+                            put("table", "user_settings")
+                            put("filter", "user_id=eq.$userId")
+                        })
+                        put(JSONObject().apply {
+                            put("event", "DELETE")
+                            put("schema", "public")
+                            put("table", "user_settings")
                             put("filter", "user_id=eq.$userId")
                         })
                     })

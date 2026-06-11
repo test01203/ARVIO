@@ -250,10 +250,25 @@ fun PlayerScreen(
     // since the Chromecast default receiver fetches the URL directly without those headers.
     val streamNeedsHeaders = uiState.selectedStream
         ?.behaviorHints?.proxyHeaders?.request?.isNotEmpty() == true
-    val isConstrainedPlaybackDevice = remember(context, deviceType) {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    val playbackActivityManager = remember(context) {
+        context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    }
+    val playbackMemoryClassMb = remember(playbackActivityManager) {
+        playbackActivityManager?.memoryClass ?: 384
+    }
+    val isLowRamPlaybackDevice = remember(playbackActivityManager) {
+        playbackActivityManager?.isLowRamDevice == true
+    }
+    val isConstrainedPlaybackDevice = remember(deviceType, isLowRamPlaybackDevice, playbackMemoryClassMb) {
         deviceType == com.arflix.tv.util.DeviceType.TV &&
-            (activityManager?.isLowRamDevice == true || (activityManager?.memoryClass ?: Int.MAX_VALUE) <= 384)
+            (isLowRamPlaybackDevice || playbackMemoryClassMb <= 384)
+    }
+    val playbackBufferProfile = remember(isLowRamPlaybackDevice, playbackMemoryClassMb, deviceType) {
+        buildPlaybackBufferProfile(
+            memoryClassMb = playbackMemoryClassMb,
+            isLowRamDevice = isLowRamPlaybackDevice,
+            isTvDevice = deviceType == com.arflix.tv.util.DeviceType.TV
+        )
     }
     val preferExtensionDecoder = remember(deviceType) {
         deviceType == com.arflix.tv.util.DeviceType.TV &&
@@ -449,6 +464,7 @@ fun PlayerScreen(
     var midPlaybackRecoveryAttempts by remember { mutableIntStateOf(0) }
     var blackVideoRecoveryStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var blackVideoReadySinceMs by remember { mutableStateOf<Long?>(null) }
+    var readyPlayingSinceMs by remember { mutableStateOf<Long?>(null) }
     val heavyStartupMaxRetries = 1
     var rebufferRecoverAttempted by remember { mutableStateOf(false) }
     var longRebufferCount by remember { mutableIntStateOf(0) }
@@ -574,6 +590,7 @@ fun PlayerScreen(
         triedStreamIndexes = emptySet()
         isAutoAdvancing = false
         userSelectedSourceManually = false
+        readyPlayingSinceMs = null
         viewModel.loadMedia(
             mediaType = mediaType,
             mediaId = mediaId,
@@ -731,9 +748,9 @@ fun PlayerScreen(
             .setDataSourceFactory(cacheDataSourceFactory)
     }
 
-    // ExoPlayer - tuned for both small and very large (70GB+) files.
-    // Byte cap is authoritative (prioritize size over time) so high-bitrate streams
-    // cannot exhaust memory on TV devices with limited heap (384-512 MB).
+    // ExoPlayer - tuned for both small and very large files. The byte cap scales
+    // with the device heap so 4K/debrid streams get breathing room without pushing
+    // low-RAM TVs into GC pressure.
     val aiRenderersFactory = remember {
         AiSubtitleRenderersFactory(
             context = context,
@@ -741,22 +758,17 @@ fun PlayerScreen(
             scope = coroutineScope
         )
     }
-    val exoPlayer = remember(isConstrainedPlaybackDevice, preferExtensionDecoder) {
-        val targetBufferBytes = if (isConstrainedPlaybackDevice) {
-            48 * 1024 * 1024
-        } else {
-            80 * 1024 * 1024
-        }
+    val exoPlayer = remember(isConstrainedPlaybackDevice, preferExtensionDecoder, playbackBufferProfile) {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                12_000,    // minBufferMs
-                45_000,    // maxBufferMs
-                150,       // bufferForPlaybackMs
-                1_500      // bufferForPlaybackAfterRebufferMs
+                playbackBufferProfile.minBufferMs,
+                playbackBufferProfile.maxBufferMs,
+                playbackBufferProfile.bufferForPlaybackMs,
+                playbackBufferProfile.bufferForPlaybackAfterRebufferMs
             )
-            .setTargetBufferBytes(targetBufferBytes)
+            .setTargetBufferBytes(playbackBufferProfile.targetBufferBytes)
             .setPrioritizeTimeOverSizeThresholds(false) // byte cap is authoritative
-            .setBackBuffer(3_000, false)                // minimal back buffer
+            .setBackBuffer(playbackBufferProfile.backBufferMs, false)
             .build()
 
         ExoPlayer.Builder(context)
@@ -1339,6 +1351,7 @@ fun PlayerScreen(
             val prepareStartMs = streamSelectedTime ?: System.currentTimeMillis()
             bufferingStartTime = null
             hasPlaybackStarted = false  // Reset for new stream
+            readyPlayingSinceMs = null
             playbackIssueReported = false
             rebufferRecoverAttempted = false
             longRebufferCount = 0
@@ -1413,11 +1426,10 @@ fun PlayerScreen(
                 else -> mediaSourceFactory.createMediaSource(mediaItem)
             }
 
-            // Source-switch hardening: stop+clear before loading next source.
+            // Keep the old frame visible while the next source prepares. Clearing
+            // media items here created a black gap before autoplay/manual sources.
             runCatching {
                 exoPlayer.playWhenReady = false
-                exoPlayer.stop()
-                exoPlayer.clearMediaItems()
             }
 
             val resumePosition = uiState.savedPosition
@@ -1426,8 +1438,8 @@ fun PlayerScreen(
             } else {
                 exoPlayer.setMediaSource(mediaSource)
             }
-            // Let ExoPlayer's LoadControl handle buffering (bufferForPlaybackMs = 150ms).
-            // No manual startup gate — trust the CDN/debrid to deliver fast enough.
+            // Let ExoPlayer's RAM-aware LoadControl handle startup buffering.
+            // No manual startup gate - trust the CDN/debrid while keeping enough safety margin.
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
             playbackStartupDiag(
@@ -1671,13 +1683,22 @@ fun PlayerScreen(
             }
             isPlaying = exoPlayer.isPlaying
             isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
+            val loopNowMs = System.currentTimeMillis()
+            val readyAndPlaying = exoPlayer.playbackState == Player.STATE_READY && exoPlayer.isPlaying
+            if (readyAndPlaying) {
+                if (readyPlayingSinceMs == null) {
+                    readyPlayingSinceMs = loopNowMs
+                }
+            } else {
+                readyPlayingSinceMs = null
+            }
 
             // Buffering watchdog - detect long buffering but do not force a source error popup.
             if (isBuffering && hasPlaybackStarted) {
                 if (bufferingStartTime == null) {
-                    bufferingStartTime = System.currentTimeMillis()
+                    bufferingStartTime = loopNowMs
                 } else {
-                    val bufferingDuration = System.currentTimeMillis() - (bufferingStartTime ?: 0L)
+                    val bufferingDuration = loopNowMs - (bufferingStartTime ?: 0L)
                     if (bufferingDuration > bufferingTimeoutMs) {
                         bufferingStartTime = null
                         longRebufferCount += 1
@@ -1708,7 +1729,7 @@ fun PlayerScreen(
             val startupPending = uiState.selectedStreamUrl != null && !hasPlaybackStarted
             if (startupPending) {
                 val selectedAt = streamSelectedTime ?: System.currentTimeMillis()
-                val startupBufferDuration = System.currentTimeMillis() - selectedAt
+                val startupBufferDuration = loopNowMs - selectedAt
                 val isHeavyStartupSource = isLikelyHeavyStream(uiState.selectedStream)
                 if (!startupRecoverAttempted && startupBufferDuration > initialBufferingTimeoutMs) {
                     startupRecoverAttempted = true
@@ -1761,9 +1782,9 @@ fun PlayerScreen(
                     !hasVideoOutput
             if (blackVideoState) {
                 if (blackVideoReadySinceMs == null) {
-                    blackVideoReadySinceMs = System.currentTimeMillis()
+                    blackVideoReadySinceMs = loopNowMs
                 } else {
-                    val stuckMs = System.currentTimeMillis() - (blackVideoReadySinceMs ?: 0L)
+                    val stuckMs = loopNowMs - (blackVideoReadySinceMs ?: 0L)
                     val thresholdMs = if (blackVideoRecoveryStage == 0) 6_500L else 9_000L
                     if (stuckMs >= thresholdMs && blackVideoRecoveryStage < 2) {
                         val selector = exoPlayer.trackSelector as? androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -1785,7 +1806,7 @@ fun PlayerScreen(
                         exoPlayer.prepare()
                         exoPlayer.playWhenReady = keepPlaying
                         blackVideoRecoveryStage += 1
-                        blackVideoReadySinceMs = System.currentTimeMillis()
+                        blackVideoReadySinceMs = loopNowMs
                     }
                 }
             } else {
@@ -1793,12 +1814,18 @@ fun PlayerScreen(
             }
 
             // Mark playback as started as soon as the player is actually playing.
+            val readyPlayingGraceElapsed = readyPlayingSinceMs?.let { loopNowMs - it >= 900L } == true
             if (!hasPlaybackStarted &&
-                exoPlayer.playbackState == Player.STATE_READY &&
-                exoPlayer.isPlaying &&
-                (!hasVideoTrack || hasVideoOutput)
+                readyAndPlaying &&
+                (!hasVideoTrack || hasVideoOutput || readyPlayingGraceElapsed)
             ) {
-                markPlaybackStarted("ready_playing_poll")
+                markPlaybackStarted(
+                    if (readyPlayingGraceElapsed && hasVideoTrack && !hasVideoOutput) {
+                        "ready_playing_grace"
+                    } else {
+                        "ready_playing_poll"
+                    }
+                )
             }
 
             if (currentPosition > 0 && duration > 0) {
@@ -3192,6 +3219,7 @@ fun PlayerScreen(
             selectedStream = uiState.selectedStream,
             isLoading = uiState.isLoadingStreams,
             hasStreamingAddons = !uiState.isSetupError,
+            addonOrderedIds = uiState.addonOrderedIds,
             title = uiState.title,
             subtitle = if (seasonNumber != null && episodeNumber != null) {
                 "S$seasonNumber E$episodeNumber"
@@ -3642,11 +3670,6 @@ private fun PulsingLogo(
                     AsyncImage(
                         model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxWidth(0.76f).height(152.dp)
-                    )
-                } else {
-                    Text(
-                        title, style = ArflixTypography.sectionTitle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
-                        color = Color.White
                     )
                 }
             }
@@ -4816,6 +4839,66 @@ private fun subtitleMimeTypeFromUrl(url: String): String {
         // parse failures when the actual content is SRT.
         else -> MimeTypes.APPLICATION_SUBRIP
     }
+}
+
+private data class PlaybackBufferProfile(
+    val minBufferMs: Int,
+    val maxBufferMs: Int,
+    val bufferForPlaybackMs: Int,
+    val bufferForPlaybackAfterRebufferMs: Int,
+    val targetBufferBytes: Int,
+    val backBufferMs: Int
+)
+
+private fun buildPlaybackBufferProfile(
+    memoryClassMb: Int,
+    isLowRamDevice: Boolean,
+    isTvDevice: Boolean
+): PlaybackBufferProfile {
+    val heapMb = memoryClassMb.coerceAtLeast(256)
+    val targetMb = when {
+        isLowRamDevice || heapMb <= 256 -> 64
+        heapMb <= 384 -> 96
+        heapMb <= 512 -> 128
+        heapMb <= 768 -> 192
+        else -> 256
+    }
+    val minBufferMs = when {
+        isLowRamDevice || heapMb <= 256 -> 18_000
+        heapMb <= 384 -> 22_000
+        heapMb <= 512 -> 28_000
+        else -> 32_000
+    }
+    val maxBufferMs = when {
+        isLowRamDevice || heapMb <= 256 -> 60_000
+        heapMb <= 384 -> 80_000
+        heapMb <= 512 -> 105_000
+        else -> 135_000
+    }
+    val startBufferMs = when {
+        isTvDevice && (isLowRamDevice || heapMb <= 384) -> 550
+        isTvDevice -> 450
+        else -> 350
+    }
+    val rebufferMs = when {
+        isLowRamDevice || heapMb <= 256 -> 3_000
+        heapMb <= 384 -> 3_500
+        else -> 4_000
+    }
+    val backBufferMs = when {
+        isLowRamDevice || heapMb <= 256 -> 2_000
+        heapMb <= 384 -> 3_000
+        else -> 5_000
+    }
+
+    return PlaybackBufferProfile(
+        minBufferMs = minBufferMs,
+        maxBufferMs = maxBufferMs,
+        bufferForPlaybackMs = startBufferMs,
+        bufferForPlaybackAfterRebufferMs = rebufferMs,
+        targetBufferBytes = targetMb * 1024 * 1024,
+        backBufferMs = backBufferMs
+    )
 }
 
 private fun estimateInitialStartupTimeoutMs(

@@ -176,6 +176,11 @@ class InAppYouTubeExtractor @Inject constructor() {
             withTimeout(EXTRACTOR_TIMEOUT_MS) {
                 extractPlaybackSourceInternal(videoId)
             }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.w(TAG, "[$videoId] extraction timed out")
+            null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "[$videoId] extraction failed: ${e.message}")
             null
@@ -213,6 +218,8 @@ class InAppYouTubeExtractor @Inject constructor() {
                             cookieHeader = null
                         )
                         client to playerResponse
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         val msg = e.message.orEmpty()
                         if (msg.contains("401") || msg.contains("403")) keyRejected = true
@@ -302,6 +309,8 @@ class InAppYouTubeExtractor @Inject constructor() {
                                 manifestUrl = manifestUrl, selectedVariantUrl = variant.url,
                                 height = variant.height, bandwidth = variant.bandwidth
                             )
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (_: Exception) { null }
                     }
                 }
@@ -384,7 +393,7 @@ class InAppYouTubeExtractor @Inject constructor() {
             "https://$trimmed"
         }
 
-        return runCatching {
+        return try {
             val uri = Uri.parse(normalized)
             val host = uri.host?.lowercase().orEmpty()
             if (host.endsWith("youtu.be")) {
@@ -407,7 +416,11 @@ class InAppYouTubeExtractor @Inject constructor() {
                 }
             }
             null
-        }.getOrNull()
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: UnsupportedOperationException) {
+            null
+        }
     }
 
     private fun fetchPlayerResponse(
@@ -502,7 +515,13 @@ class InAppYouTubeExtractor @Inject constructor() {
     }
 
     private fun hasNParam(url: String): Boolean =
-        runCatching { !Uri.parse(url).getQueryParameter("n").isNullOrBlank() }.getOrDefault(false)
+        try {
+            !Uri.parse(url).getQueryParameter("n").isNullOrBlank()
+        } catch (_: IllegalArgumentException) {
+            false
+        } catch (_: UnsupportedOperationException) {
+            false
+        }
 
     private fun videoScore(height: Int, fps: Int, bitrate: Double) =
         height * 1_000_000_000.0 + fps * 1_000_000.0 + bitrate
@@ -528,7 +547,7 @@ class InAppYouTubeExtractor @Inject constructor() {
     }
 
     private fun absolutizeUrl(baseUrl: String, maybeRelative: String): String =
-        runCatching { URL(URL(baseUrl), maybeRelative).toString() }.getOrElse { maybeRelative }
+        try { URL(URL(baseUrl), maybeRelative).toString() } catch (e: java.net.MalformedURLException) { maybeRelative }
 
     private fun performRequest(url: String, method: String, headers: Map<String, String>, body: String? = null): RequestResponse {
         val requestBuilder = Request.Builder().url(url).headers(buildHeaders(headers))

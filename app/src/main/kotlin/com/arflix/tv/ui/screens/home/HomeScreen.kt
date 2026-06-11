@@ -8,11 +8,13 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -131,7 +133,9 @@ import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CollectionTileShape
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.network.OkHttpProvider
+import com.arflix.tv.ui.components.FeaturedMediaCard
 import com.arflix.tv.ui.components.MediaCard as ArvioMediaCard
 import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.CardLayoutMode
@@ -181,9 +185,13 @@ import androidx.media3.ui.PlayerView
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.withContext
+import dagger.hilt.android.EntryPointAccessors
+import com.arflix.tv.ui.components.TrailerPlayerEntryPoint
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.abs
@@ -1002,8 +1010,8 @@ fun HomeScreen(
                     )
                 }
 
-                // YouTube trailer auto-play (sound controlled by trailerSoundEnabled setting)
-                if (heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed && !heroRowIsContinueWatching) {
+                // YouTube trailer auto-play — on TV, trailer plays inside the focused card instead
+                if ((isMobile || !uiState.trailerInCards) && heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed && !heroRowIsContinueWatching) {
                     TrailerPlayer(
                         youtubeKey = uiState.heroTrailerKey!!,
                         delayMs = uiState.trailerDelaySeconds * 1000L,
@@ -1134,6 +1142,9 @@ fun HomeScreen(
             onNavigateToSettings = onNavigateToSettings,
             onSwitchProfile = onSwitchProfile,
             onExitApp = onExitApp,
+            featuredTrailerKey = if (!isMobile && uiState.trailerInCards && uiState.trailerAutoPlay && !trailerSuppressed && !heroRowIsContinueWatching) uiState.heroTrailerKey else null,
+            featuredTrailerDelayMs = uiState.trailerDelaySeconds * 1000L,
+            featuredTrailerVolume = if (uiState.trailerSoundEnabled) 1f else 0f,
             onOpenContextMenu = { item, isContinue ->
                 contextMenuItem = item
                 contextMenuIsContinueWatching = isContinue
@@ -2163,6 +2174,9 @@ private fun HomeInputLayer(
     onNavigateToSettings: () -> Unit,
     onSwitchProfile: () -> Unit,
     onExitApp: () -> Unit,
+    featuredTrailerKey: String? = null,
+    featuredTrailerDelayMs: Long = 0L,
+    featuredTrailerVolume: Float = 0f,
     onOpenContextMenu: (MediaItem, Boolean) -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -2527,6 +2541,9 @@ private fun HomeInputLayer(
             onSwitchProfile = onSwitchProfile,
             onNavigateToDetails = onNavigateToDetails,
             onMobileCategoryVisiblePosition = onMobileCategoryVisiblePosition,
+            featuredTrailerKey = featuredTrailerKey,
+            featuredTrailerDelayMs = featuredTrailerDelayMs,
+            featuredTrailerVolume = featuredTrailerVolume,
             onItemClick = { item ->
                 if (!isActionableHomeItem(item)) {
                     return@HomeRowsLayer
@@ -2569,6 +2586,9 @@ private fun HomeRowsLayer(
     onSwitchProfile: () -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onMobileCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> },
+    featuredTrailerKey: String? = null,
+    featuredTrailerDelayMs: Long = 0L,
+    featuredTrailerVolume: Float = 0f,
     onItemClick: (MediaItem) -> Unit,
     onItemLongClick: ((MediaItem, Boolean) -> Unit)? = null
 ) {
@@ -2609,6 +2629,9 @@ private fun HomeRowsLayer(
             smoothScrolling = smoothScrolling,
             onLoadMoreCategory = onLoadMoreCategory,
             onItemFocusedPrefetch = onItemFocusedPrefetch,
+            featuredTrailerKey = featuredTrailerKey,
+            featuredTrailerDelayMs = featuredTrailerDelayMs,
+            featuredTrailerVolume = featuredTrailerVolume,
             onItemClick = onItemClick
         )
     }
@@ -2660,7 +2683,8 @@ private fun MobileHomeRowsLayer(
             val isCollectionRow = category.id.startsWith("collection_row_")
             val rowKey = remember(category.id) { "home:${category.id}" }
             val rowUsePosterCards = rememberCatalogueRowLayoutMode(rowKey) == CardLayoutMode.POSTER
-            val rowMobileItemWidth = if (rowUsePosterCards) 120.dp else 200.dp
+            val isPortrait = category.isPortrait(rowUsePosterCards)
+            val rowMobileItemWidth = if (isPortrait) 120.dp else 200.dp
             val rowState = rememberLazyListState()
 
             LaunchedEffect(rowState, category.id) {
@@ -2706,20 +2730,7 @@ private fun MobileHomeRowsLayer(
                 } else {
                     rowUsePosterCards
                 }
-                val skeletonCount = if (isPortrait) 12 else 7
-                val itemsToRender = remember(category.items, rowHasMore, isPortrait) {
-                    if (rowHasMore) {
-                        category.items + List(skeletonCount) { idx ->
-                            MediaItem(
-                                id = -1000 - idx,
-                                title = "",
-                                isPlaceholder = true
-                            )
-                        }
-                    } else {
-                        category.items
-                    }
-                }
+                val itemsToRender = category.items
 
                 // Horizontal card row with touch scrolling
                 LazyRow(
@@ -2767,11 +2778,10 @@ private fun MobileHomeRowsLayer(
                                 modifier = Modifier.width(rowMobileItemWidth)
                             ) {
                                 val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
-                                val collectionLandscape = item.collectionTileShape != CollectionTileShape.POSTER
                                 ArvioMediaCard(
                                     item = item,
                                     width = rowMobileItemWidth,
-                                    isLandscape = if (isCollectionRow) collectionLandscape else !rowUsePosterCards,
+                                    isLandscape = !isPortrait,
                                     logoImageUrl = cardLogoUrl,
                                     showProgress = false,
                                     showTitle = !item.collectionHideTitle,
@@ -2793,11 +2803,10 @@ private fun MobileHomeRowsLayer(
                             }
                         } else {
                             val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
-                            val collectionLandscape = item.collectionTileShape != CollectionTileShape.POSTER
                             ArvioMediaCard(
                                 item = item,
                                 width = rowMobileItemWidth,
-                                isLandscape = if (isCollectionRow) collectionLandscape else !rowUsePosterCards,
+                                isLandscape = !isPortrait,
                                 logoImageUrl = cardLogoUrl,
                                 showProgress = isContinueWatching,
                                 showTitle = !item.collectionHideTitle,
@@ -2829,6 +2838,9 @@ private fun TvHomeRowsLayer(
     smoothScrolling: Boolean = true,
     onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
+    featuredTrailerKey: String? = null,
+    featuredTrailerDelayMs: Long = 0L,
+    featuredTrailerVolume: Float = 0f,
     onItemClick: (MediaItem) -> Unit
 ) {
     // ── Focus-row stabilizer ──
@@ -3030,6 +3042,9 @@ private fun TvHomeRowsLayer(
                             onLoadMore = onRowLoadMore,
                             focusedItemIndex = if (rowIsFocused) focusState.currentItemIndex else -1,
                             isFastScrolling = rowIsFocused && isFastScrolling,
+                            featuredTrailerKey = if (rowIsFocused) featuredTrailerKey else null,
+                            featuredTrailerDelayMs = featuredTrailerDelayMs,
+                            featuredTrailerVolume = featuredTrailerVolume,
                             onItemClick = onItemClick,
                             onItemFocused = onRowItemFocused
                         )
@@ -3243,10 +3258,14 @@ private fun ContentRow(
     onLoadMore: () -> Unit = {},
     focusedItemIndex: Int,
     isFastScrolling: Boolean,
+    featuredTrailerKey: String? = null,
+    featuredTrailerDelayMs: Long = 0L,
+    featuredTrailerVolume: Float = 0f,
     onItemClick: (MediaItem) -> Unit,
     onItemFocused: (MediaItem, Int) -> Unit
 ) {
     val isCollectionRow = category.id.startsWith("collection_row_")
+    val effectiveCategoryHasMore = !isCollectionRow && categoryHasMore
     val rowState = rememberLazyListState()
     val density = LocalDensity.current
     val isContinueWatching = category.id == "continue_watching"
@@ -3270,7 +3289,43 @@ private fun ContentRow(
     val itemSpanPx = remember(density, itemWidth, itemSpacing) {
         with(density) { (itemWidth + itemSpacing).toPx().coerceAtLeast(1f) }
     }
+    val hasFeaturedCard = !effectivePosterMode && featuredTrailerKey != null
+    // Tracks which item index has held focus long enough to expand.
+    // Using an index (not a boolean) means the derived `featuredExpanded`
+    // evaluates to false immediately in the same composition frame when
+    // focusedItemIndex changes — no async LaunchedEffect reset needed.
+    // Without this, the new card briefly saw featuredExpanded=true
+    // (stale from the previous card) and rendered at 380dp, causing a
+    // layout overshoot in the LazyRow before snapping back.
+    var featuredExpandedForIndex by remember { mutableIntStateOf(-1) }
+    val featuredExpanded = hasFeaturedCard && isCurrentRow &&
+        featuredExpandedForIndex == focusedItemIndex && focusedItemIndex >= 0
+    val context = LocalContext.current
+    val trailerExtractor = remember {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            TrailerPlayerEntryPoint::class.java
+        ).inAppYouTubeExtractor()
+    }
+    // Pre-warm the URL cache the moment a card gets focus — races ahead of the
+    // expansion delay so the cache is populated by the time the card expands.
+    LaunchedEffect(focusedItemIndex, featuredTrailerKey) {
+        val key = featuredTrailerKey ?: return@LaunchedEffect
+        if (!hasFeaturedCard || !isCurrentRow || focusedItemIndex < 0) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            try { trailerExtractor.extractPlaybackSource("https://www.youtube.com/watch?v=$key") }
+            catch (_: Exception) {}
+        }
+    }
+    LaunchedEffect(focusedItemIndex, hasFeaturedCard) {
+        featuredExpandedForIndex = -1
+        if (hasFeaturedCard && isCurrentRow && focusedItemIndex >= 0) {
+            delay(featuredTrailerDelayMs.coerceAtLeast(500L))
+            featuredExpandedForIndex = focusedItemIndex
+        }
+    }
     val railFocusOverlayActive = isCurrentRow && isScrollable && focusedItemIndex >= 0 && totalItems > 0 &&
+        !hasFeaturedCard &&
         focusedItemIndex <= maxFirstIndex &&
         focusedItemIndex == rowState.firstVisibleItemIndex &&
         rowState.firstVisibleItemScrollOffset == 0
@@ -3384,20 +3439,7 @@ private fun ContentRow(
             )
         }
 
-        val skeletonCount = if (effectivePosterMode) 12 else 7
-        val itemsToRender = remember(category.items, categoryHasMore, effectivePosterMode) {
-            if (categoryHasMore) {
-                category.items + List(skeletonCount) { idx ->
-                    MediaItem(
-                        id = -1000 - idx,
-                        title = "",
-                        isPlaceholder = true
-                    )
-                }
-            } else {
-                category.items
-            }
-        }
+        val itemsToRender = category.items
 
         // Cards row - clipped to hide previous items when scrolling
         val clipModifier = if (isContinueWatching) Modifier else Modifier.clipToBounds()
@@ -3438,7 +3480,7 @@ private fun ContentRow(
                     LaunchedEffect(item.id) {
                         onLoadMore()
                     }
-                } else if (categoryHasMore && index >= category.items.size - 5) {
+                } else if (effectiveCategoryHasMore && index >= category.items.size - 5) {
                     LaunchedEffect(category.items.size) {
                         onLoadMore()
                     }
@@ -3452,15 +3494,90 @@ private fun ContentRow(
                     { latestOnItemClick.value(currentItem.value) }
                 }
                 if (isRanked && index < 10) {
-                    // Top 10 rows should use the SAME card sizing as every other row.
-                    // The previous layout used giant background numerals and a smaller
-                    // embedded card, which made the row feel cramped and inconsistent.
-                    // Use a normal card and place a premium gold rank badge in the
-                    // top-right corner instead.
                     val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
-                    Box(
-                        modifier = Modifier.width(itemWidth)
-                    ) {
+                    val rankedExpanded = hasFeaturedCard && itemIsFocused && featuredExpanded
+                    if (rankedExpanded) {
+                        // Expanded: fresh Animatable starting at itemWidth so the expansion
+                        // animates in from the card's resting size. This branch is only entered
+                        // after the 500ms focus-settle delay, so the Animatable is always new.
+                        val expandAnim = remember { Animatable(itemWidth.value) }
+                        LaunchedEffect(Unit) {
+                            expandAnim.animateTo(380f, spring())
+                        }
+                        val expandedWidth = expandAnim.value.dp
+                        Box(modifier = Modifier.width(expandedWidth)) {
+                            FeaturedMediaCard(
+                                item = item,
+                                width = expandedWidth,
+                                height = 146.dp,
+                                trailerKey = featuredTrailerKey,
+                                trailerDelayMs = 0L,
+                                trailerVolume = featuredTrailerVolume,
+                                onClick = onCardClick,
+                            )
+                            TopRankRibbon(
+                                rank = index + 1,
+                                isFocused = itemIsFocused,
+                                compact = !effectivePosterMode,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .zIndex(2f)
+                                    .padding(start = 8.dp)
+                            )
+                        }
+                    } else {
+                        // Collapsed: plain constant width — no animation state, no frame delay.
+                        // The LazyRow item is immediately itemWidth, same as non-ranked cards,
+                        // so the scroll delta is always computed against the correct layout.
+                        Box(modifier = Modifier.width(itemWidth)) {
+                            ArvioMediaCard(
+                                item = item,
+                                width = itemWidth,
+                                isLandscape = !effectivePosterMode,
+                                logoImageUrl = cardLogoUrl,
+                                showLogoImage = true,
+                                raiseOnFocus = !isFastScrolling,
+                                showProgress = false,
+                                showTitle = isCollectionRow && !item.collectionHideTitle,
+                                isFocusedOverride = itemIsFocused && !railFocusOverlayActive,
+                                focusedScale = 1f,
+                                enableFocusedImageSwap = !isCollectionRow && !isFastScrolling,
+                                animateFocus = false,
+                                enableSystemFocus = false,
+                                onFocused = onCardFocused,
+                                onClick = onCardClick,
+                            )
+                            TopRankRibbon(
+                                rank = index + 1,
+                                isFocused = itemIsFocused,
+                                compact = !effectivePosterMode,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .zIndex(2f)
+                                    .padding(start = 8.dp)
+                            )
+                        }
+                    }
+                } else {
+                    val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
+                    val cardExpanded = hasFeaturedCard && itemIsFocused && featuredExpanded
+                    val animatedCardWidth by animateDpAsState(
+                        targetValue = if (cardExpanded) 380.dp else itemWidth,
+                        animationSpec = if (cardExpanded) spring() else snap(),
+                        label = "featuredCardWidth"
+                    )
+                    if (cardExpanded) {
+                        FeaturedMediaCard(
+                            item = item,
+                            width = animatedCardWidth,
+                            height = 146.dp,
+                            trailerKey = featuredTrailerKey,
+                            trailerDelayMs = 0L,
+                            trailerVolume = featuredTrailerVolume,
+                            onClick = onCardClick,
+                        )
+                    } else {
+                        // Normal card — not focused, not yet expanded, or hasFeaturedCard off
                         ArvioMediaCard(
                             item = item,
                             width = itemWidth,
@@ -3468,7 +3585,7 @@ private fun ContentRow(
                             logoImageUrl = cardLogoUrl,
                             showLogoImage = true,
                             raiseOnFocus = !isFastScrolling,
-                            showProgress = false,
+                            showProgress = isContinueWatching,
                             showTitle = isCollectionRow && !item.collectionHideTitle,
                             isFocusedOverride = itemIsFocused && !railFocusOverlayActive,
                             focusedScale = 1f,
@@ -3478,37 +3595,7 @@ private fun ContentRow(
                             onFocused = onCardFocused,
                             onClick = onCardClick,
                         )
-
-                        TopRankRibbon(
-                            rank = index + 1,
-                            isFocused = itemIsFocused,
-                            compact = !effectivePosterMode,
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .zIndex(2f)
-                                .padding(start = 8.dp)
-                        )
                     }
-                } else {
-                    // Standard Card - keep width aligned with scroll math
-                    val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
-                    ArvioMediaCard(
-                        item = item,
-                        width = itemWidth,
-                        isLandscape = !effectivePosterMode,
-                        logoImageUrl = cardLogoUrl,
-                        showLogoImage = true,
-                        raiseOnFocus = !isFastScrolling,
-                        showProgress = isContinueWatching,
-                        showTitle = isCollectionRow && !item.collectionHideTitle,
-                        isFocusedOverride = itemIsFocused && !railFocusOverlayActive,
-                        focusedScale = 1f,
-                        enableFocusedImageSwap = !isCollectionRow && !isFastScrolling,
-                        animateFocus = false,
-                        enableSystemFocus = false,
-                        onFocused = onCardFocused,
-                        onClick = onCardClick,
-                    )
                 }
                 }
             }

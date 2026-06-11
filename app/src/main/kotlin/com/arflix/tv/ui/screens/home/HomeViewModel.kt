@@ -16,6 +16,7 @@ import coil.size.Precision
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.CatalogKind
+import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.model.CollectionGroupKind
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
@@ -80,6 +81,7 @@ data class HomeUiState(
     val trailerAutoPlay: Boolean = false,
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 2,
+    val trailerInCards: Boolean = true,
     // Home hero metadata visibility toggles (issue #72)
     val showBudget: Boolean = true,
     val heroOverviewOverride: String? = null,
@@ -1285,6 +1287,9 @@ class HomeViewModel @Inject constructor(
                 val trailerDelaySeconds = (prefs.asMap().entries
                     .firstOrNull { (key, _) -> key.name.endsWith("_trailer_delay_seconds") }
                     ?.value as? String)?.toIntOrNull() ?: 2
+                val trailerInCards = prefs.asMap().entries
+                    .firstOrNull { (key, _) -> key.name.endsWith("_trailer_in_cards") }
+                    ?.value as? Boolean ?: true
                 val smoothScrollingExplicit = prefs.asMap().entries
                     .firstOrNull { (key, _) -> key.name.endsWith("_smooth_scrolling") }
                     ?.value as? Boolean
@@ -1293,6 +1298,7 @@ class HomeViewModel @Inject constructor(
                     trailerAutoPlay = trailerEnabled,
                     trailerSoundEnabled = trailerSoundEnabled,
                     trailerDelaySeconds = trailerDelaySeconds,
+                    trailerInCards = trailerInCards,
                     showBudget = showBudget,
                     clockFormat = clockFormat,
                     smoothScrolling = smoothScrolling
@@ -2125,7 +2131,7 @@ class HomeViewModel @Inject constructor(
                         }
                         val cat = allById[cfg.id]
                         if (cat == null || cat.items.isEmpty()) return@mapNotNull null
-                        if (!cfg.isPreinstalled &&
+                        if (cfg.sourceType == CatalogSourceType.ADDON &&
                             cat.title.trim().lowercase(Locale.US) in serviceTitleBlocklist
                         ) return@mapNotNull null
                         cat.withTop10CapIfNeeded()
@@ -2794,6 +2800,29 @@ class HomeViewModel @Inject constructor(
 
         savedCatalogs.forEach { cfg ->
             if (isCollectionTileConfig(cfg)) return@forEach
+            val rowItems = if (isCollectionRailConfig(cfg)) {
+                val group = cfg.collectionGroup
+                val matchingConfigs = savedCatalogs.filter {
+                    isCollectionTileConfig(it) && it.collectionGroup == group
+                }
+                if (matchingConfigs.isNotEmpty()) {
+                    matchingConfigs.mapIndexed { idx, itemCfg ->
+                        MediaItem(
+                            id = -100 - idx,
+                            title = "",
+                            mediaType = MediaType.MOVIE,
+                            isPlaceholder = true,
+                            collectionTileShape = itemCfg.collectionTileShape,
+                            collectionHideTitle = itemCfg.collectionHideTitle
+                        )
+                    }
+                } else {
+                    placeholderItems
+                }
+            } else {
+                placeholderItems
+            }
+
             rows.add(
                 Category(
                     id = if (isCollectionRailConfig(cfg)) {
@@ -2802,7 +2831,7 @@ class HomeViewModel @Inject constructor(
                         cfg.id
                     },
                     title = cfg.title,
-                    items = placeholderItems
+                    items = rowItems
                 )
             )
         }

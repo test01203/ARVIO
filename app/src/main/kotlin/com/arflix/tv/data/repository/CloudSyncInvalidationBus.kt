@@ -28,6 +28,7 @@ data class CloudSyncInvalidation(
 @Singleton
 class CloudSyncInvalidationBus @Inject constructor() {
     private val _events = MutableSharedFlow<CloudSyncInvalidation>(
+        replay = 1,
         extraBufferCapacity = 64
     )
     val events: SharedFlow<CloudSyncInvalidation> = _events.asSharedFlow()
