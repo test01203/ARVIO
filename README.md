@@ -25,6 +25,7 @@ It is not intended as an advertising page, download landing page, or content dis
 - Optional per-profile Trakt.tv integration for watchlist, history, progress, and continue watching
 - Catalog management with manual URLs and public Trakt/MDBList list discovery
 - Home-server source and catalog support for user-owned Jellyfin, Emby, and Plex libraries
+- Optional Telegram integration for searching video files in your own connected channels and groups
 - Third-party addon support for user-configured sources
 - Watchlist and continue-watching state with profile isolation
 - Subtitle and audio track selection, subtitle language filtering, and AI subtitle tools
