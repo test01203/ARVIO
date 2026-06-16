@@ -73,6 +73,8 @@ const sections = {
   dashboard: renderDashboard,
   profiles: renderProfiles,
   addons: renderAddons,
+  iptv: renderIPTV,
+  plugins: renderPlugins,
   history: renderHistory,
   watchlist: renderWatchlist,
   ai: renderAI,
@@ -273,6 +275,148 @@ async function renderAddons() {
     ${renderAddonList(byType.TELEGRAM, `Telegram מקורות (${byType.TELEGRAM.length})`)}
     <div class="card" style="margin-top:16px">
       <div style="font-size:13px;color:var(--text-muted)">💡 להוספה/הסרה של הרחבות — גש להגדרות ב-ARVIO. הנתונים מסונכרנים אוטומטית.</div>
+    </div>
+  `;
+}
+
+// ── IPTV ──────────────────────────────────────────────────────────────────
+async function renderIPTV() {
+  const main = document.getElementById('main-content');
+  const payload = state.syncPayload;
+  const profiles = payload?.profiles ?? [];
+  const activeId = payload?.activeProfileId;
+  const iptvByProfile = payload?.iptvByProfile ?? {};
+
+  // Collect all playlists across profiles
+  const allPlaylists = [];
+  const seenUrls = new Set();
+  for (const [profileId, iptvState] of Object.entries(iptvByProfile)) {
+    const profile = profiles.find(p => p.id === profileId);
+    const pName = profile?.name ?? profileId.slice(0, 8);
+    (iptvState.playlists ?? []).forEach(pl => {
+      if (!seenUrls.has(pl.m3uUrl)) {
+        seenUrls.add(pl.m3uUrl);
+        allPlaylists.push({ ...pl, _profileName: pName, _profileId: profileId });
+      }
+    });
+    // Legacy single M3U
+    if (iptvState.m3uUrl && !seenUrls.has(iptvState.m3uUrl)) {
+      seenUrls.add(iptvState.m3uUrl);
+      allPlaylists.push({ id: 'legacy', name: 'M3U', m3uUrl: iptvState.m3uUrl, epgUrl: iptvState.epgUrl, enabled: true, _profileName: pName, _profileId: profileId });
+    }
+  }
+
+  // Collect favourite channels/groups from active profile
+  const activeIPTV = iptvByProfile[activeId] ?? Object.values(iptvByProfile)[0] ?? {};
+  const favGroups = activeIPTV.favoriteGroups ?? [];
+  const favChannels = activeIPTV.favoriteChannels ?? [];
+
+  main.innerHTML = `
+    <div class="section-header">
+      <div><div class="section-title">IPTV</div><div class="section-sub">${allPlaylists.length} רשימות פעילות</div></div>
+    </div>
+
+    ${allPlaylists.length === 0 ? emptyState('אין רשימות IPTV מוגדרות — הגדר ב-ARVIO ← הגדרות ← IPTV') : `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">רשימות M3U</div>
+    <div class="card" style="padding:0 20px">
+      ${allPlaylists.map(pl => `
+        <div class="list-item">
+          <div class="item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <div class="item-info">
+            <div class="item-title">${pl.name || 'M3U Playlist'}</div>
+            <div class="item-sub" style="font-family:monospace;font-size:11px;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pl.m3uUrl}</div>
+            ${pl.epgUrl ? `<div class="item-sub" style="font-size:11px">EPG: ${pl.epgUrl}</div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <span class="badge ${pl.enabled !== false ? 'badge-green' : 'badge-red'}">${pl.enabled !== false ? 'פעיל' : 'כבוי'}</span>
+            <span class="badge badge-gray">${pl._profileName}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>`}
+
+    ${favGroups.length > 0 ? `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">קבוצות מועדפות (${favGroups.length})</div>
+    <div class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px">
+      ${favGroups.map(g => `<span class="badge badge-gold">⭐ ${g}</span>`).join('')}
+    </div>` : ''}
+
+    ${favChannels.length > 0 ? `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">ערוצים מועדפים (${favChannels.length})</div>
+    <div class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px">
+      ${favChannels.slice(0, 50).map(c => `<span class="badge badge-blue">📺 ${c}</span>`).join('')}
+      ${favChannels.length > 50 ? `<span class="badge badge-gray">+${favChannels.length - 50} נוספים</span>` : ''}
+    </div>` : ''}
+
+    <div class="card" style="margin-top:16px">
+      <div style="font-size:13px;color:var(--text-muted)">💡 להוספת רשימות M3U ולניהול ערוצים — גש להגדרות IPTV ב-ARVIO. השינויים מסונכרנים אוטומטית לענן.</div>
+    </div>
+  `;
+}
+
+// ── Plugins ───────────────────────────────────────────────────────────────
+async function renderPlugins() {
+  const main = document.getElementById('main-content');
+  const payload = state.syncPayload;
+  const repos = payload?.pluginRepositories ?? [];
+  const scrapers = payload?.pluginScrapers ?? [];
+  const pluginsEnabled = payload?.pluginsEnabled ?? false;
+
+  main.innerHTML = `
+    <div class="section-header">
+      <div><div class="section-title">פלאגינים (Sideload)</div><div class="section-sub">${repos.length} מאגרים · ${scrapers.length} scrapers</div></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:13px;color:var(--text-muted)">פלאגינים ${pluginsEnabled ? 'פעילים' : 'כבויים'}</span>
+        <label class="toggle">
+          <input type="checkbox" ${pluginsEnabled ? 'checked' : ''} onchange="updateSetting('pluginsEnabled',this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    ${repos.length === 0 ? emptyState('אין מאגרי פלאגינים — הוסף ב-ARVIO ← הגדרות ← פלאגינים') : `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">מאגרים (${repos.length})</div>
+    <div class="card" style="padding:0 20px">
+      ${repos.map(r => `
+        <div class="list-item">
+          <div class="item-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+          </div>
+          <div class="item-info">
+            <div class="item-title">${r.name}</div>
+            <div class="item-sub" style="font-family:monospace;font-size:11px">${r.url}</div>
+            <div class="item-sub">${r.scraperCount ?? 0} scrapers · עודכן ${r.lastUpdated ? timeAgo(new Date(r.lastUpdated).toISOString()) : 'אף פעם'}</div>
+          </div>
+          <span class="badge ${r.enabled ? 'badge-green' : 'badge-red'}">${r.enabled ? 'פעיל' : 'כבוי'}</span>
+        </div>
+      `).join('')}
+    </div>`}
+
+    ${scrapers.length > 0 ? `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Scrapers (${scrapers.length})</div>
+    <div class="card" style="padding:0 20px">
+      ${scrapers.map(s => `
+        <div class="list-item">
+          <div class="item-icon">
+            ${s.logo ? `<img src="${s.logo}" alt="" onerror="this.style.display='none'">` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`}
+          </div>
+          <div class="item-info">
+            <div class="item-title">${s.name}</div>
+            <div class="item-sub">${s.description || ''} · v${s.version}</div>
+            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
+              ${(s.supportedTypes ?? []).map(t => `<span class="badge badge-gray">${t}</span>`).join('')}
+              ${(s.contentLanguage ?? []).map(l => `<span class="badge badge-blue">${l}</span>`).join('')}
+            </div>
+          </div>
+          <span class="badge ${s.enabled && s.manifestEnabled ? 'badge-green' : 'badge-red'}">${s.enabled && s.manifestEnabled ? 'פעיל' : 'כבוי'}</span>
+        </div>
+      `).join('')}
+    </div>` : ''}
+
+    <div class="card" style="margin-top:16px">
+      <div style="font-size:13px;color:var(--text-muted)">💡 הפלאגינים מסונכרנים לענן אוטומטית. קוד ה-JS של כל scraper נשמר מקומית בטלוויזיה בלבד ולא עולה לענן.</div>
     </div>
   `;
 }
@@ -658,6 +802,8 @@ function buildShell(user) {
     { id: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>' },
     { id: 'profiles', label: 'פרופילים', icon: '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' },
     { id: 'addons', label: 'הרחבות', icon: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h6M9 15h4"/>' },
+    { id: 'iptv', label: 'IPTV', icon: '<path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
+    { id: 'plugins', label: 'פלאגינים', icon: '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>' },
     { id: 'history', label: 'היסטוריה', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' },
     { id: 'watchlist', label: 'רשימת צפייה', icon: '<path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/>' },
     { id: 'ai', label: 'תרגום AI', icon: '<path d="M12 2a3 3 0 013 3v7a3 3 0 01-6 0V5a3 3 0 013-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>' },
