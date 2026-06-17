@@ -3,6 +3,7 @@ package com.arflix.tv.data.repository
 import android.content.Context
 import android.os.Build
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.util.AppLogger
@@ -36,6 +37,12 @@ class AppUsageAnalyticsRepository @Inject constructor(
         if (Constants.SUPABASE_URL.isBlank() || Constants.SUPABASE_ANON_KEY.isBlank()) return@withContext
 
         runCatching {
+            val now = System.currentTimeMillis()
+            val lastSentAt = context.settingsDataStore.data.first()[LAST_APP_OPEN_SENT_AT_KEY] ?: 0L
+            if (now - lastSentAt < APP_OPEN_MIN_INTERVAL_MS) {
+                return@runCatching
+            }
+
             withTimeoutOrNull(AUTH_STATE_WAIT_MS) {
                 authRepository.authState.first { it !is AuthState.Loading }
             }
@@ -76,6 +83,9 @@ class AppUsageAnalyticsRepository @Inject constructor(
                     throw IllegalStateException("Usage event failed: HTTP ${response.code}")
                 }
             }
+            context.settingsDataStore.edit { prefs ->
+                prefs[LAST_APP_OPEN_SENT_AT_KEY] = now
+            }
         }.onFailure { error ->
             AppLogger.w(TAG, "App usage analytics event failed", error)
         }
@@ -102,6 +112,8 @@ class AppUsageAnalyticsRepository @Inject constructor(
     private companion object {
         const val TAG = "AppUsageAnalytics"
         const val AUTH_STATE_WAIT_MS = 10_000L
+        const val APP_OPEN_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000L
         val INSTALL_ID_KEY = stringPreferencesKey("analytics_install_id_v1")
+        val LAST_APP_OPEN_SENT_AT_KEY = longPreferencesKey("analytics_last_app_open_sent_at_v1")
     }
 }

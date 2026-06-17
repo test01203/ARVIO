@@ -63,7 +63,7 @@ class RealtimeSyncManager @Inject constructor(
         // change, server filter missed it). Halving the interval tightens
         // the worst-case propagation window for cross-device sync without
         // meaningfully increasing load (one GET every 45s while signed in).
-        private const val PERIODIC_SYNC_INTERVAL_MS = 45_000L
+        private const val PERIODIC_SYNC_INTERVAL_MS = 15 * 60 * 1000L
         private const val DEBOUNCE_MS = 2_000L
         private const val WATCH_HISTORY_DEBOUNCE_MS = 1_000L
         private const val WATCH_HISTORY_SELF_ECHO_GUARD_MS = 1_500L

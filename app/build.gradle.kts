@@ -35,6 +35,11 @@ android {
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
+        // Emergency Supabase cost guard. Keep high-volume public metadata and
+        // idle realtime polling off Supabase unless explicitly re-enabled.
+        buildConfigField("Boolean", "ENABLE_TMDB_EDGE_PROXY", "false")
+        buildConfigField("Boolean", "ENABLE_TRAKT_EDGE_PROXY", "false")
+        buildConfigField("Boolean", "ENABLE_REALTIME_CLOUD_SYNC", "false")
 
 
         // Support both 32-bit and 64-bit devices (required for Google Play since 2019)

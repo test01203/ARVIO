@@ -235,8 +235,8 @@ class PlayerViewModel @Inject constructor(
     private val SKIP_INTERVAL_MIN_VISIBLE_MS = 250L
 
     private val SCROBBLE_UPDATE_INTERVAL_MS = 20_000L
-    private val WATCH_HISTORY_UPDATE_INTERVAL_MS = 10_000L
-    private val CLOUD_PUSH_INTERVAL_MS = 60_000L // Push CW to cloud every 60s during active playback
+    private val WATCH_HISTORY_UPDATE_INTERVAL_MS = 60_000L
+    private val CLOUD_PUSH_INTERVAL_MS = 5 * 60_000L // Push CW to cloud occasionally during active playback
 
     private var lastCloudPushTime = 0L
 

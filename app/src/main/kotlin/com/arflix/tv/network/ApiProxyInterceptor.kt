@@ -1,6 +1,7 @@
 package com.arflix.tv.network
 
 import com.arflix.tv.util.Constants
+import com.arflix.tv.BuildConfig
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Request
@@ -22,14 +23,26 @@ class ApiProxyInterceptor : Interceptor {
 
         return when (originalUrl.host) {
             "api.themoviedb.org" -> {
-                // Route TMDB requests through proxy
-                val proxyRequest = rewriteForTmdbProxy(originalRequest) ?: originalRequest
-                chain.proceed(proxyRequest)
+                // TMDB browsing is very high-volume. Proxy it only when the
+                // build explicitly opts in; otherwise use the direct API key
+                // and OkHttp cache to avoid runaway Edge Function billing.
+                if (BuildConfig.ENABLE_TMDB_EDGE_PROXY) {
+                    val proxyRequest = rewriteForTmdbProxy(originalRequest) ?: originalRequest
+                    chain.proceed(proxyRequest)
+                } else {
+                    chain.proceed(originalRequest)
+                }
             }
             "api.trakt.tv" -> {
-                // Route Trakt requests through proxy
-                val proxyRequest = rewriteForTraktProxy(originalRequest) ?: originalRequest
-                chain.proceed(proxyRequest)
+                // Trakt catalog/watchlist/scrobble traffic can also be noisy.
+                // Keep proxy support available for future secret-only builds,
+                // but do not route all user traffic through Supabase by default.
+                if (BuildConfig.ENABLE_TRAKT_EDGE_PROXY) {
+                    val proxyRequest = rewriteForTraktProxy(originalRequest) ?: originalRequest
+                    chain.proceed(proxyRequest)
+                } else {
+                    chain.proceed(originalRequest)
+                }
             }
             else -> {
                 // Pass through other requests unchanged
