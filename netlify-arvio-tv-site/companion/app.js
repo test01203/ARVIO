@@ -261,13 +261,15 @@ async function loadSyncPayload() {
 
 async function saveSyncPayload(payload) {
   const raw = JSON.stringify(payload);
-  const wrapper = JSON.stringify({
-    __arvioAccountSyncPayload: raw,
-    __arvioAccountSyncUpdatedAt: new Date().toISOString(),
-  });
+  // Read existing wrapper so we only overwrite our two keys and preserve any others
+  const { data: existing } = await db.from('profiles').select('addons').eq('id', state.userId).single();
+  let wrapper = {};
+  try { wrapper = JSON.parse(existing?.addons ?? '{}'); } catch {}
+  wrapper.__arvioAccountSyncPayload = raw;
+  wrapper.__arvioAccountSyncUpdatedAt = new Date().toISOString();
   const { error } = await db
     .from('profiles')
-    .update({ addons: wrapper })
+    .update({ addons: JSON.stringify(wrapper) })
     .eq('id', state.userId);
   if (error) throw error;
   state.syncPayload = payload;
@@ -347,9 +349,9 @@ async function renderDashboard() {
   }
   ra.innerHTML = recent.map(r => `
     <div class="list-item">
-      <img class="history-poster" src="${r.poster_path ? TMDB_IMG + r.poster_path : ''}" onerror="this.style.background='var(--bg-card2)';this.src=''" alt="">
+      <img class="history-poster" src="${r.poster_path ? escapeHtml(TMDB_IMG + r.poster_path) : ''}" onerror="this.style.background='var(--bg-card2)';this.src=''" alt="">
       <div class="item-info">
-        <div class="item-title">${r.title || '—'}</div>
+        <div class="item-title">${escapeHtml(r.title) || '—'}</div>
         <div class="item-sub">${r.media_type === 'movie' ? t('type_movie') : t('type_series')} · ${timeAgo(r.updated_at)}</div>
         <div class="progress-bar"><div class="progress-fill" style="width:${Math.round((r.progress||0)*100)}%"></div></div>
       </div>
@@ -364,8 +366,10 @@ function getProfileColors() {
 }
 
 function renderProfileAvatar(profile) {
-  const color = '#' + (profile.avatarColor?.toString(16).padStart(8,'0').slice(2) || 'F5C442');
-  const letter = (profile.name || '?')[0].toUpperCase();
+  const color = /^[0-9a-fA-F]{6}$/.test((profile.avatarColor?.toString(16).padStart(8,'0').slice(2) || ''))
+    ? '#' + profile.avatarColor.toString(16).padStart(8,'0').slice(2)
+    : '#F5C442';
+  const letter = escapeHtml((profile.name || '?')[0].toUpperCase());
   return `<div class="profile-avatar-big" style="background:${color}22;color:${color}">${letter}</div>`;
 }
 
@@ -390,7 +394,7 @@ async function renderProfiles() {
       ${profiles.map(p => `
         <div class="profile-card ${p.id === activeId ? 'active-profile' : ''}">
           ${renderProfileAvatar(p)}
-          <div class="profile-name">${p.name}</div>
+          <div class="profile-name">${escapeHtml(p.name)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
             ${p.id === activeId ? `<span class="badge badge-gold">${t('badge_active')}</span>` : ''}
             ${p.isKidsProfile ? `<span class="badge badge-blue">${t('badge_kids')}</span>` : ''}
@@ -435,9 +439,8 @@ async function renderAddons() {
   };
 
   function addonIcon(a) {
-    if (a.manifest?.logo || a.logo) {
-      return `<img src="${a.manifest?.logo || a.logo}" alt="" onerror="this.style.display='none'">`;
-    }
+    const logo = safeUrl(a.manifest?.logo || a.logo);
+    if (logo) return `<img src="${logo}" alt="" onerror="this.style.display='none'">`;
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>`;
   }
 
@@ -459,8 +462,8 @@ async function renderAddons() {
           <div class="list-item">
             <div class="item-icon">${addonIcon(a)}</div>
             <div class="item-info">
-              <div class="item-title">${a.name || a.id}</div>
-              <div class="item-sub">${a.manifest?.description || a.description || a.id}</div>
+              <div class="item-title">${escapeHtml(a.name || a.id)}</div>
+              <div class="item-sub">${escapeHtml(a.manifest?.description || a.description || a.id)}</div>
             </div>
             <div style="display:flex;gap:8px;align-items:center">
               ${addonTypeBadge(a)}
@@ -530,13 +533,13 @@ async function renderIPTV() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
           <div class="item-info">
-            <div class="item-title">${pl.name || 'M3U Playlist'}</div>
-            <div class="item-sub" style="font-family:monospace;font-size:11px;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pl.m3uUrl}</div>
-            ${pl.epgUrl ? `<div class="item-sub" style="font-size:11px">EPG: ${pl.epgUrl}</div>` : ''}
+            <div class="item-title">${escapeHtml(pl.name) || 'M3U Playlist'}</div>
+            <div class="item-sub" style="font-family:monospace;font-size:11px;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(pl.m3uUrl)}</div>
+            ${pl.epgUrl ? `<div class="item-sub" style="font-size:11px">EPG: ${escapeHtml(pl.epgUrl)}</div>` : ''}
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <span class="badge ${pl.enabled !== false ? 'badge-green' : 'badge-red'}">${pl.enabled !== false ? t('iptv_active') : t('iptv_disabled')}</span>
-            <span class="badge badge-gray">${pl._profileName}</span>
+            <span class="badge badge-gray">${escapeHtml(pl._profileName)}</span>
           </div>
         </div>
       `).join('')}
@@ -545,13 +548,13 @@ async function renderIPTV() {
     ${favGroups.length > 0 ? `
     <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">${t('fav_groups', favGroups.length)}</div>
     <div class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px">
-      ${favGroups.map(g => `<span class="badge badge-gold">⭐ ${g}</span>`).join('')}
+      ${favGroups.map(g => `<span class="badge badge-gold">⭐ ${escapeHtml(g)}</span>`).join('')}
     </div>` : ''}
 
     ${favChannels.length > 0 ? `
     <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">${t('fav_channels', favChannels.length)}</div>
     <div class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px">
-      ${favChannels.slice(0, 50).map(c => `<span class="badge badge-blue">📺 ${c}</span>`).join('')}
+      ${favChannels.slice(0, 50).map(c => `<span class="badge badge-blue">📺 ${escapeHtml(c)}</span>`).join('')}
       ${favChannels.length > 50 ? `<span class="badge badge-gray">${t('iptv_more', favChannels.length - 50)}</span>` : ''}
     </div>` : ''}
 
@@ -590,8 +593,8 @@ async function renderPlugins() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
           </div>
           <div class="item-info">
-            <div class="item-title">${r.name}</div>
-            <div class="item-sub" style="font-family:monospace;font-size:11px">${r.url}</div>
+            <div class="item-title">${escapeHtml(r.name)}</div>
+            <div class="item-sub" style="font-family:monospace;font-size:11px">${escapeHtml(r.url)}</div>
             <div class="item-sub">${r.scraperCount ?? 0} scrapers · ${t('repo_updated')} ${r.lastUpdated ? timeAgo(new Date(r.lastUpdated).toISOString()) : t('repo_never')}</div>
           </div>
           <span class="badge ${r.enabled ? 'badge-green' : 'badge-red'}">${r.enabled ? t('plugin_active') : t('plugin_disabled')}</span>
@@ -605,14 +608,14 @@ async function renderPlugins() {
       ${scrapers.map(s => `
         <div class="list-item">
           <div class="item-icon">
-            ${s.logo ? `<img src="${s.logo}" alt="" onerror="this.style.display='none'">` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`}
+            ${safeUrl(s.logo) ? `<img src="${safeUrl(s.logo)}" alt="" onerror="this.style.display='none'">` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`}
           </div>
           <div class="item-info">
-            <div class="item-title">${s.name}</div>
-            <div class="item-sub">${s.description || ''} · v${s.version}</div>
+            <div class="item-title">${escapeHtml(s.name)}</div>
+            <div class="item-sub">${escapeHtml(s.description)} · v${escapeHtml(s.version)}</div>
             <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
-              ${(s.supportedTypes ?? []).map(st => `<span class="badge badge-gray">${st}</span>`).join('')}
-              ${(s.contentLanguage ?? []).map(l => `<span class="badge badge-blue">${l}</span>`).join('')}
+              ${(s.supportedTypes ?? []).map(st => `<span class="badge badge-gray">${escapeHtml(st)}</span>`).join('')}
+              ${(s.contentLanguage ?? []).map(l => `<span class="badge badge-blue">${escapeHtml(l)}</span>`).join('')}
             </div>
           </div>
           <span class="badge ${s.enabled && s.manifestEnabled ? 'badge-green' : 'badge-red'}">${s.enabled && s.manifestEnabled ? t('plugin_active') : t('plugin_disabled')}</span>
@@ -670,9 +673,9 @@ async function renderHistoryContent() {
   el.innerHTML = `<div class="card" style="padding:0 20px">
     ${data.map(r => `
       <div class="list-item">
-        <img class="history-poster" src="${r.poster_path ? TMDB_IMG+r.poster_path : ''}" onerror="this.style.background='var(--bg-card2)';this.src=''" alt="">
+        <img class="history-poster" src="${r.poster_path ? escapeHtml(TMDB_IMG+r.poster_path) : ''}" onerror="this.style.background='var(--bg-card2)';this.src=''" alt="">
         <div class="item-info">
-          <div class="item-title">${r.title || '—'}${r.season ? ` S${String(r.season).padStart(2,'0')}E${String(r.episode||0).padStart(2,'0')}` : ''}</div>
+          <div class="item-title">${escapeHtml(r.title) || '—'}${r.season ? ` S${String(Number(r.season)||0).padStart(2,'0')}E${String(Number(r.episode)||0).padStart(2,'0')}` : ''}</div>
           <div class="item-sub">${timeAgo(r.updated_at)} · ${formatDuration(r.position_seconds)} / ${formatDuration(r.duration_seconds)}</div>
           <div class="progress-bar"><div class="progress-fill" style="width:${Math.round((r.progress||0)*100)}%"></div></div>
         </div>
@@ -940,7 +943,7 @@ async function renderSettings() {
       <div class="list-item" style="padding:10px 0;border:none">
         <div class="item-info">
           <div class="item-title">${t('user_id_label')}</div>
-          <div class="item-sub" style="font-family:monospace;font-size:11px">${state.userId}</div>
+          <div class="item-sub" style="font-family:monospace;font-size:11px">${escapeHtml(state.userId)}</div>
         </div>
       </div>
       <button class="btn btn-danger" onclick="signOut()" style="margin-top:8px">
@@ -963,6 +966,24 @@ async function updateSetting(key, value) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function safeUrl(url) {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    return (u.protocol === 'https:' || u.protocol === 'http:') ? url : '';
+  } catch { return ''; }
+}
+
 function timeAgo(iso) {
   if (!iso) return '';
   const d = Date.now() - new Date(iso).getTime();
@@ -995,9 +1016,9 @@ function emptyState(msg) {
 // ── Shell ─────────────────────────────────────────────────────────────────
 function buildShell(user) {
   const name = user.user_metadata?.full_name || user.email || t('user_fallback');
-  const avatar = user.user_metadata?.avatar_url || '';
+  const avatar = safeUrl(user.user_metadata?.avatar_url || '');
   const email = user.email || '';
-  const initial = name[0].toUpperCase();
+  const initial = escapeHtml(name[0].toUpperCase());
 
   const navItems = [
     { id: 'dashboard', label: t('nav_dashboard'), icon: '<path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>' },
@@ -1030,8 +1051,8 @@ function buildShell(user) {
           ${avatar ? `<img src="${avatar}" alt="">` : initial}
         </div>
         <div class="user-info">
-          <div class="user-name">${name}</div>
-          <div class="user-email">${email}</div>
+          <div class="user-name">${escapeHtml(name)}</div>
+          <div class="user-email">${escapeHtml(email)}</div>
         </div>
         <button class="btn-lang" onclick="setLang(currentLang==='en'?'he':'en')" title="Switch language" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-muted);cursor:pointer;padding:4px 8px;font-size:12px;font-weight:600;margin-left:4px">
           ${currentLang === 'en' ? 'עב' : 'EN'}
