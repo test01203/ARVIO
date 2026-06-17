@@ -3,6 +3,7 @@ package com.arflix.tv.data.repository
 import android.util.Log
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.arflix.tv.BuildConfig
 import com.arflix.tv.util.Constants
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -128,7 +129,9 @@ class RealtimeSyncManager @Inject constructor(
         Log.i(TAG, "Starting realtime sync")
         _syncStatusFlow.value = CloudSyncStatus.RECONNECTING
         connectWebSocket()
-        startPeriodicSync()
+        if (BuildConfig.ENABLE_PERIODIC_CLOUD_PULL) {
+            startPeriodicSync()
+        }
         startTokenRefreshLoop()
     }
 
@@ -274,6 +277,7 @@ class RealtimeSyncManager @Inject constructor(
         }
         ws.send(accountSyncJoin.toString())
 
+        if (BuildConfig.ENABLE_REALTIME_WATCH_SYNC) {
         // Channel 2: watch_history INSERT + UPDATE + DELETE events.
         // DELETE was missing previously — when a user removed an item from Continue
         // Watching on device A, device B never got a realtime notification for the
@@ -354,7 +358,14 @@ class RealtimeSyncManager @Inject constructor(
         }
         ws.send(watchedTablesJoin.toString())
 
-        Log.i(TAG, "Joined account_sync + watch_history + watched_status channels for user $userId")
+        }
+
+        val channels = if (BuildConfig.ENABLE_REALTIME_WATCH_SYNC) {
+            "account_sync + watch_history + watched_status"
+        } else {
+            "account_sync"
+        }
+        Log.i(TAG, "Joined $channels channels for user $userId")
     }
 
     private fun handleMessage(text: String) {

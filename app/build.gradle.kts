@@ -39,7 +39,9 @@ android {
         // idle realtime polling off Supabase unless explicitly re-enabled.
         buildConfigField("Boolean", "ENABLE_TMDB_EDGE_PROXY", "false")
         buildConfigField("Boolean", "ENABLE_TRAKT_EDGE_PROXY", "false")
-        buildConfigField("Boolean", "ENABLE_REALTIME_CLOUD_SYNC", "false")
+        buildConfigField("Boolean", "ENABLE_REALTIME_CLOUD_SYNC", "true")
+        buildConfigField("Boolean", "ENABLE_REALTIME_WATCH_SYNC", "false")
+        buildConfigField("Boolean", "ENABLE_PERIODIC_CLOUD_PULL", "false")
 
 
         // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
