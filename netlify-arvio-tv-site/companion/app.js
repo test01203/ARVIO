@@ -91,7 +91,7 @@ function navigate(id) {
 
 async function renderSection() {
   const main = document.getElementById('main-content');
-  main.innerHTML = `<div class="loading"><div class="spinner"></div> טוען...</div>`;
+  main.innerHTML = `<div class="loading"><div class="spinner"></div> Loading...</div>`;
   await sections[state.activeSection]?.();
 }
 
@@ -114,17 +114,17 @@ async function renderDashboard() {
     <div class="section-header">
       <div>
         <div class="section-title">Dashboard</div>
-        <div class="section-sub">סקירה מהירה של חשבון ה-ARVIO שלך</div>
+        <div class="section-sub">A quick overview of your ARVIO account</div>
       </div>
     </div>
     <div class="card-grid">
-      <div class="stat-card"><div class="stat-label">פרופילים</div><div class="stat-value gold">${profiles.length || 1}</div></div>
-      <div class="stat-card"><div class="stat-label">הרחבות</div><div class="stat-value">${addons.filter(a => a.isEnabled).length}</div></div>
-      <div class="stat-card"><div class="stat-label">היסטוריית צפייה</div><div class="stat-value">${histRes.count ?? '—'}</div></div>
-      <div class="stat-card"><div class="stat-label">רשימת צפייה</div><div class="stat-value">${wlRes.count ?? '—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Profiles</div><div class="stat-value gold">${profiles.length || 1}</div></div>
+      <div class="stat-card"><div class="stat-label">Add-ons</div><div class="stat-value">${addons.filter(a => a.isEnabled).length}</div></div>
+      <div class="stat-card"><div class="stat-label">Watch History</div><div class="stat-value">${histRes.count ?? '—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Watchlist</div><div class="stat-value">${wlRes.count ?? '—'}</div></div>
     </div>
     <div class="card">
-      <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px">פעילות אחרונה</div>
+      <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px">Recent Activity</div>
       <div id="recent-activity"><div class="loading"><div class="spinner"></div></div></div>
     </div>
   `;
@@ -137,7 +137,7 @@ async function renderDashboard() {
 
   const ra = document.getElementById('recent-activity');
   if (!recent?.length) {
-    ra.innerHTML = emptyState('אין פעילות אחרונה');
+    ra.innerHTML = emptyState('No recent activity');
     return;
   }
   ra.innerHTML = recent.map(r => `
@@ -145,7 +145,7 @@ async function renderDashboard() {
       <img class="history-poster" src="${r.poster_path ? TMDB_IMG + r.poster_path : ''}" onerror="this.style.background='var(--bg-card2)';this.src=''" alt="">
       <div class="item-info">
         <div class="item-title">${r.title || '—'}</div>
-        <div class="item-sub">${r.media_type === 'movie' ? '🎬 סרט' : '📺 סדרה'} · ${timeAgo(r.updated_at)}</div>
+        <div class="item-sub">${r.media_type === 'movie' ? '🎬 Movie' : '📺 Series'} · ${timeAgo(r.updated_at)}</div>
         <div class="progress-bar"><div class="progress-fill" style="width:${Math.round((r.progress||0)*100)}%"></div></div>
       </div>
       <span class="badge badge-gray">${Math.round((r.progress||0)*100)}%</span>
@@ -172,14 +172,14 @@ async function renderProfiles() {
 
   if (!profiles.length) {
     main.innerHTML = `
-      <div class="section-header"><div class="section-title">פרופילים</div></div>
-      ${emptyState('אין פרופילים — פתח את ARVIO בטלוויזיה ליצירת פרופיל')}`;
+      <div class="section-header"><div class="section-title">Profiles</div></div>
+      ${emptyState('No profiles found — open ARVIO on your TV to create one')}`;
     return;
   }
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">פרופילים</div><div class="section-sub">${profiles.length} פרופילים בחשבון</div></div>
+      <div><div class="section-title">Profiles</div><div class="section-sub">${profiles.length} profile${profiles.length !== 1 ? 's' : ''} in account</div></div>
     </div>
     <div class="profiles-grid">
       ${profiles.map(p => `
@@ -187,15 +187,15 @@ async function renderProfiles() {
           ${renderProfileAvatar(p)}
           <div class="profile-name">${p.name}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
-            ${p.id === activeId ? '<span class="badge badge-gold">פעיל</span>' : ''}
-            ${p.isKidsProfile ? '<span class="badge badge-blue">ילדים</span>' : ''}
-            ${p.pin ? '<span class="badge badge-gray">🔒 נעול</span>' : ''}
+            ${p.id === activeId ? '<span class="badge badge-gold">Active</span>' : ''}
+            ${p.isKidsProfile ? '<span class="badge badge-blue">Kids</span>' : ''}
+            ${p.pin ? '<span class="badge badge-gray">🔒 Locked</span>' : ''}
           </div>
         </div>
       `).join('')}
     </div>
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted)">💡 ניהול פרופילים (יצירה, מחיקה, שינוי שם) זמין ב-ARVIO על הטלוויזיה.<br>שינויים מסונכרנים אוטומטית עם הענן.</div>
+      <div style="font-size:13px;color:var(--text-muted)">💡 Profile management (create, delete, rename) is available in ARVIO on your TV.<br>Changes sync automatically to the cloud.</div>
     </div>
   `;
 }
@@ -219,8 +219,8 @@ async function renderAddons() {
 
   if (!addons.length) {
     main.innerHTML = `
-      <div class="section-header"><div class="section-title">הרחבות</div></div>
-      ${emptyState('אין הרחבות מותקנות')}`;
+      <div class="section-header"><div class="section-title">Add-ons</div></div>
+      ${emptyState('No add-ons installed')}`;
     return;
   }
 
@@ -238,11 +238,11 @@ async function renderAddons() {
 
   function addonTypeBadge(a) {
     const t = a.type || 'COMMUNITY';
-    if (t === 'OFFICIAL') return '<span class="badge badge-gold">רשמי</span>';
-    if (t === 'SUBTITLE') return '<span class="badge badge-blue">כתוביות</span>';
-    if (t === 'METADATA') return '<span class="badge badge-gray">מטאדאטה</span>';
+    if (t === 'OFFICIAL') return '<span class="badge badge-gold">Official</span>';
+    if (t === 'SUBTITLE') return '<span class="badge badge-blue">Subtitles</span>';
+    if (t === 'METADATA') return '<span class="badge badge-gray">Metadata</span>';
     if (a.runtimeKind === 'TELEGRAM') return '<span class="badge badge-blue">Telegram</span>';
-    return '<span class="badge badge-gray">קהילה</span>';
+    return '<span class="badge badge-gray">Community</span>';
   }
 
   function renderAddonList(list, label) {
@@ -259,7 +259,7 @@ async function renderAddons() {
             </div>
             <div style="display:flex;gap:8px;align-items:center">
               ${addonTypeBadge(a)}
-              <span class="badge ${a.isEnabled ? 'badge-green' : 'badge-red'}">${a.isEnabled ? 'פעיל' : 'כבוי'}</span>
+              <span class="badge ${a.isEnabled ? 'badge-green' : 'badge-red'}">${a.isEnabled ? 'Enabled' : 'Disabled'}</span>
             </div>
           </div>
         `).join('')}
@@ -269,12 +269,12 @@ async function renderAddons() {
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">הרחבות</div><div class="section-sub">${addons.filter(a=>a.isEnabled).length} פעילות מתוך ${addons.length}</div></div>
+      <div><div class="section-title">Add-ons</div><div class="section-sub">${addons.filter(a=>a.isEnabled).length} active of ${addons.length}</div></div>
     </div>
-    ${renderAddonList(byType.STREMIO, `Stremio הרחבות (${byType.STREMIO.length})`)}
-    ${renderAddonList(byType.TELEGRAM, `Telegram מקורות (${byType.TELEGRAM.length})`)}
+    ${renderAddonList(byType.STREMIO, `Stremio Add-ons (${byType.STREMIO.length})`)}
+    ${renderAddonList(byType.TELEGRAM, `Telegram Sources (${byType.TELEGRAM.length})`)}
     <div class="card" style="margin-top:16px">
-      <div style="font-size:13px;color:var(--text-muted)">💡 להוספה/הסרה של הרחבות — גש להגדרות ב-ARVIO. הנתונים מסונכרנים אוטומטית.</div>
+      <div style="font-size:13px;color:var(--text-muted)">💡 To add or remove add-ons, go to Settings in ARVIO on your TV. Data syncs automatically.</div>
     </div>
   `;
 }
@@ -313,11 +313,11 @@ async function renderIPTV() {
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">IPTV</div><div class="section-sub">${allPlaylists.length} רשימות פעילות</div></div>
+      <div><div class="section-title">IPTV</div><div class="section-sub">${allPlaylists.length} active playlist${allPlaylists.length !== 1 ? 's' : ''}</div></div>
     </div>
 
-    ${allPlaylists.length === 0 ? emptyState('אין רשימות IPTV מוגדרות — הגדר ב-ARVIO ← הגדרות ← IPTV') : `
-    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">רשימות M3U</div>
+    ${allPlaylists.length === 0 ? emptyState('No IPTV playlists configured — go to ARVIO → Settings → IPTV') : `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">M3U Playlists</div>
     <div class="card" style="padding:0 20px">
       ${allPlaylists.map(pl => `
         <div class="list-item">
@@ -330,7 +330,7 @@ async function renderIPTV() {
             ${pl.epgUrl ? `<div class="item-sub" style="font-size:11px">EPG: ${pl.epgUrl}</div>` : ''}
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-            <span class="badge ${pl.enabled !== false ? 'badge-green' : 'badge-red'}">${pl.enabled !== false ? 'פעיל' : 'כבוי'}</span>
+            <span class="badge ${pl.enabled !== false ? 'badge-green' : 'badge-red'}">${pl.enabled !== false ? 'Active' : 'Disabled'}</span>
             <span class="badge badge-gray">${pl._profileName}</span>
           </div>
         </div>
@@ -338,16 +338,16 @@ async function renderIPTV() {
     </div>`}
 
     ${favGroups.length > 0 ? `
-    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">קבוצות מועדפות (${favGroups.length})</div>
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Favourite Groups (${favGroups.length})</div>
     <div class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px">
       ${favGroups.map(g => `<span class="badge badge-gold">⭐ ${g}</span>`).join('')}
     </div>` : ''}
 
     ${favChannels.length > 0 ? `
-    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">ערוצים מועדפים (${favChannels.length})</div>
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Favourite Channels (${favChannels.length})</div>
     <div class="card" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:8px">
       ${favChannels.slice(0, 50).map(c => `<span class="badge badge-blue">📺 ${c}</span>`).join('')}
-      ${favChannels.length > 50 ? `<span class="badge badge-gray">+${favChannels.length - 50} נוספים</span>` : ''}
+      ${favChannels.length > 50 ? `<span class="badge badge-gray">+${favChannels.length - 50} more</span>` : ''}
     </div>` : ''}
 
     <div class="card" style="margin-top:16px">
@@ -366,9 +366,9 @@ async function renderPlugins() {
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">פלאגינים (Sideload)</div><div class="section-sub">${repos.length} מאגרים · ${scrapers.length} scrapers</div></div>
+      <div><div class="section-title">Plugins (Sideload)</div><div class="section-sub">${repos.length} repositor${repos.length !== 1 ? 'ies' : 'y'} · ${scrapers.length} scrapers</div></div>
       <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:13px;color:var(--text-muted)">פלאגינים ${pluginsEnabled ? 'פעילים' : 'כבויים'}</span>
+        <span style="font-size:13px;color:var(--text-muted)">Plugins ${pluginsEnabled ? 'enabled' : 'disabled'}</span>
         <label class="toggle">
           <input type="checkbox" ${pluginsEnabled ? 'checked' : ''} onchange="updateSetting('pluginsEnabled',this.checked)">
           <span class="toggle-slider"></span>
@@ -376,8 +376,8 @@ async function renderPlugins() {
       </div>
     </div>
 
-    ${repos.length === 0 ? emptyState('אין מאגרי פלאגינים — הוסף ב-ARVIO ← הגדרות ← פלאגינים') : `
-    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">מאגרים (${repos.length})</div>
+    ${repos.length === 0 ? emptyState('No plugin repositories — add one in ARVIO → Settings → Plugins') : `
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Repositories (${repos.length})</div>
     <div class="card" style="padding:0 20px">
       ${repos.map(r => `
         <div class="list-item">
@@ -387,9 +387,9 @@ async function renderPlugins() {
           <div class="item-info">
             <div class="item-title">${r.name}</div>
             <div class="item-sub" style="font-family:monospace;font-size:11px">${r.url}</div>
-            <div class="item-sub">${r.scraperCount ?? 0} scrapers · עודכן ${r.lastUpdated ? timeAgo(new Date(r.lastUpdated).toISOString()) : 'אף פעם'}</div>
+            <div class="item-sub">${r.scraperCount ?? 0} scrapers · updated ${r.lastUpdated ? timeAgo(new Date(r.lastUpdated).toISOString()) : 'never'}</div>
           </div>
-          <span class="badge ${r.enabled ? 'badge-green' : 'badge-red'}">${r.enabled ? 'פעיל' : 'כבוי'}</span>
+          <span class="badge ${r.enabled ? 'badge-green' : 'badge-red'}">${r.enabled ? 'Active' : 'Disabled'}</span>
         </div>
       `).join('')}
     </div>`}
@@ -410,13 +410,13 @@ async function renderPlugins() {
               ${(s.contentLanguage ?? []).map(l => `<span class="badge badge-blue">${l}</span>`).join('')}
             </div>
           </div>
-          <span class="badge ${s.enabled && s.manifestEnabled ? 'badge-green' : 'badge-red'}">${s.enabled && s.manifestEnabled ? 'פעיל' : 'כבוי'}</span>
+          <span class="badge ${s.enabled && s.manifestEnabled ? 'badge-green' : 'badge-red'}">${s.enabled && s.manifestEnabled ? 'Active' : 'Disabled'}</span>
         </div>
       `).join('')}
     </div>` : ''}
 
     <div class="card" style="margin-top:16px">
-      <div style="font-size:13px;color:var(--text-muted)">💡 הפלאגינים מסונכרנים לענן אוטומטית. קוד ה-JS של כל scraper נשמר מקומית בטלוויזיה בלבד ולא עולה לענן.</div>
+      <div style="font-size:13px;color:var(--text-muted)">💡 Plugins sync to the cloud automatically. Each scraper's JS code stays local on your TV only and is never uploaded to the cloud.</div>
     </div>
   `;
 }
@@ -430,9 +430,9 @@ async function renderHistory() {
       <div><div class="section-title">היסטוריית צפייה</div></div>
     </div>
     <div class="tabs">
-      <button class="tab ${state.historyTab==='movies'?'active':''}" onclick="state.historyTab='movies';renderHistoryContent()">סרטים</button>
-      <button class="tab ${state.historyTab==='tv'?'active':''}" onclick="state.historyTab='tv';renderHistoryContent()">סדרות</button>
-      <button class="tab ${state.historyTab==='all'?'active':''}" onclick="state.historyTab='all';renderHistoryContent()">הכל</button>
+      <button class="tab ${state.historyTab==='movies'?'active':''}" onclick="state.historyTab='movies';renderHistoryContent()">Movies</button>
+      <button class="tab ${state.historyTab==='tv'?'active':''}" onclick="state.historyTab='tv';renderHistoryContent()">TV Shows</button>
+      <button class="tab ${state.historyTab==='all'?'active':''}" onclick="state.historyTab='all';renderHistoryContent()">All</button>
     </div>
     <div id="history-content"><div class="loading"><div class="spinner"></div></div></div>
   `;
@@ -441,7 +441,7 @@ async function renderHistory() {
 
 async function renderHistoryContent() {
   document.querySelectorAll('.tab').forEach(t => {
-    const map = { movies: 'סרטים', tv: 'סדרות', all: 'הכל' };
+    const map = { movies: 'Movies', tv: 'TV Shows', all: 'All' };
     t.classList.toggle('active', t.textContent.trim() === map[state.historyTab]);
   });
 
@@ -459,8 +459,8 @@ async function renderHistoryContent() {
   if (state.historyTab === 'tv') q = q.eq('media_type', 'tv');
 
   const { data, error } = await q;
-  if (error) { el.innerHTML = `<div class="empty"><div class="empty-title">שגיאה בטעינה</div></div>`; return; }
-  if (!data?.length) { el.innerHTML = emptyState('אין היסטוריית צפייה'); return; }
+  if (error) { el.innerHTML = `<div class="empty"><div class="empty-title">Failed to load</div></div>`; return; }
+  if (!data?.length) { el.innerHTML = emptyState('No watch history'); return; }
 
   el.innerHTML = `<div class="card" style="padding:0 20px">
     ${data.map(r => `
@@ -485,15 +485,15 @@ async function renderHistoryContent() {
 async function deleteHistory(id, btn) {
   btn.disabled = true;
   const { error } = await db.from('watch_history').delete().eq('id', id).eq('user_id', state.userId);
-  if (error) { toast('שגיאה במחיקה', 'err'); btn.disabled = false; return; }
-  toast('הוסר מההיסטוריה ✓');
+  if (error) { toast('Failed to delete', 'err'); btn.disabled = false; return; }
+  toast('Removed from history ✓');
   btn.closest('.list-item').remove();
 }
 
 // ── Watchlist ─────────────────────────────────────────────────────────────
 async function renderWatchlist() {
   const main = document.getElementById('main-content');
-  main.innerHTML = `<div class="section-header"><div class="section-title">רשימת צפייה</div></div><div class="loading"><div class="spinner"></div></div>`;
+  main.innerHTML = `<div class="section-header"><div class="section-title">Watchlist</div></div><div class="loading"><div class="spinner"></div></div>`;
 
   const { data, error } = await db.from('watchlist')
     .select('*')
@@ -501,7 +501,7 @@ async function renderWatchlist() {
     .order('added_at', { ascending: false });
 
   if (error || !data?.length) {
-    main.innerHTML = `<div class="section-header"><div class="section-title">רשימת צפייה</div></div>${emptyState('רשימת הצפייה ריקה')}`;
+    main.innerHTML = `<div class="section-header"><div class="section-title">Watchlist</div></div>${emptyState('Your watchlist is empty')}`;
     return;
   }
 
@@ -523,7 +523,7 @@ async function renderWatchlist() {
               <div class="item-title">TMDB #${i.tmdb_id}</div>
               <div class="item-sub">נוסף ${timeAgo(i.added_at)}</div>
             </div>
-            <button class="btn btn-danger" style="padding:6px 10px" onclick="removeWatchlist(${i.tmdb_id},'${i.media_type}',this)">הסר</button>
+            <button class="btn btn-danger" style="padding:6px 10px" onclick="removeWatchlist(${i.tmdb_id},'${i.media_type}',this)">Remove</button>
           </div>
         `).join('')}
       </div>`;
@@ -531,10 +531,10 @@ async function renderWatchlist() {
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">רשימת צפייה</div><div class="section-sub">${data.length} פריטים</div></div>
+      <div><div class="section-title">Watchlist</div><div class="section-sub">${data.length} item${data.length !== 1 ? 's' : ''}</div></div>
     </div>
-    ${renderWLSection(movies, '🎬 סרטים')}
-    ${renderWLSection(shows, '📺 סדרות')}
+    ${renderWLSection(movies, '🎬 Movies')}
+    ${renderWLSection(shows, '📺 TV Shows')}
   `;
 }
 
@@ -542,8 +542,8 @@ async function removeWatchlist(tmdbId, mediaType, btn) {
   btn.disabled = true;
   const { error } = await db.from('watchlist').delete()
     .eq('user_id', state.userId).eq('tmdb_id', tmdbId).eq('media_type', mediaType);
-  if (error) { toast('שגיאה במחיקה', 'err'); btn.disabled = false; return; }
-  toast('הוסר מהרשימה ✓');
+  if (error) { toast('Failed to remove', 'err'); btn.disabled = false; return; }
+  toast('Removed from watchlist ✓');
   document.getElementById(`wl-${tmdbId}-${mediaType}`)?.remove();
 }
 
@@ -558,7 +558,7 @@ async function renderAI() {
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">תרגום כתוביות AI</div><div class="section-sub">הגדר תרגום כתוביות בזמן אמת על ידי AI</div></div>
+      <div><div class="section-title">AI Subtitle Translation</div><div class="section-sub">Configure real-time AI subtitle translation</div></div>
     </div>
 
     <div class="tv-banner">
@@ -567,19 +567,19 @@ async function renderAI() {
         <path d="M8 21h8M12 17v4"/>
       </svg>
       <div>
-        <div class="tv-banner-title">🔑 מפתח API — הגדר ישירות בטלוויזיה</div>
-        <div class="tv-banner-sub">מטעמי אבטחה, מפתח ה-API נשמר רק מקומית בטלוויזיה.<br>פתח את ARVIO ← הגדרות ← כתוביות ← תרגום AI</div>
+        <div class="tv-banner-title">🔑 API Key — set directly on your TV</div>
+        <div class="tv-banner-sub">For security, your API key is stored locally on your TV only.<br>Open ARVIO → Settings → Subtitles → AI Translation</div>
       </div>
     </div>
 
     <div class="card">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px">הגדרות תרגום</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px">Translation Settings</div>
 
       <div class="form-group">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
-            <div style="font-weight:600">הפעל תרגום AI</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">תרגם כתוביות אוטומטית בזמן צפייה</div>
+            <div style="font-weight:600">Enable AI Translation</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Automatically translate subtitles while watching</div>
           </div>
           <label class="toggle">
             <input type="checkbox" id="ai-enabled" ${enabled ? 'checked' : ''} onchange="updateAISetting('subtitleAiEnabled', this.checked)">
@@ -591,8 +591,8 @@ async function renderAI() {
       <div class="form-group">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
-            <div style="font-weight:600">בחירה אוטומטית</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">בחר אוטומטית כתוביות לתרגום</div>
+            <div style="font-weight:600">Auto-select</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Automatically pick subtitles for translation</div>
           </div>
           <label class="toggle">
             <input type="checkbox" id="ai-auto" ${autoSelect ? 'checked' : ''} onchange="updateAISetting('subtitleAiAutoSelect', this.checked)">
@@ -604,8 +604,8 @@ async function renderAI() {
       <div class="form-group">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
-            <div style="font-weight:600">הסר כתוביות לכבדי שמיעה</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">הסר תיאורי קול מהכתוביות [SDH]</div>
+            <div style="font-weight:600">Remove Hearing Impaired (HI)</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Strip audio descriptions from subtitles [SDH]</div>
           </div>
           <label class="toggle">
             <input type="checkbox" id="ai-hi" ${removeHI ? 'checked' : ''} onchange="updateAISetting('subtitleRemoveHearingImpaired', this.checked)">
@@ -616,29 +616,29 @@ async function renderAI() {
     </div>
 
     <div class="card">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px">בחר מודל AI</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px">Select AI Model</div>
       <div class="models-grid">
         <label class="model-card ${model==='GROQ_LLAMA_70B'?'selected':''}">
           <input type="radio" name="ai-model" value="GROQ_LLAMA_70B" ${model==='GROQ_LLAMA_70B'?'checked':''} onchange="updateAISetting('subtitleAiModel',this.value)">
           <div>
             <div class="model-name">⚡ Groq Llama 70B</div>
-            <div class="model-desc">מהיר ביותר, חינמי, מומלץ לתרגום כתוביות</div>
+            <div class="model-desc">Fastest, free, recommended for subtitle translation</div>
           </div>
         </label>
         <label class="model-card ${model==='GEMINI_FLASH_25'?'selected':''}">
           <input type="radio" name="ai-model" value="GEMINI_FLASH_25" ${model==='GEMINI_FLASH_25'?'checked':''} onchange="updateAISetting('subtitleAiModel',this.value)">
           <div>
             <div class="model-name">🤖 Gemini Flash 2.5</div>
-            <div class="model-desc">Google Gemini, איכות גבוהה, מהיר מאוד</div>
+            <div class="model-desc">Google Gemini, high quality, very fast</div>
           </div>
         </label>
       </div>
 
       <div style="background:var(--bg-card2);border-radius:8px;padding:14px 16px;margin-top:8px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:8px">איך לקבל מפתח API חינמי?</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">How to get a free API key?</div>
         <div style="font-size:12px;color:var(--text-muted);line-height:1.7">
-          🔹 <b>Groq (מומלץ)</b>: גש ל-<code style="background:var(--bg);padding:1px 5px;border-radius:4px">console.groq.com</code> ← צור חשבון ← API Keys ← Create Key<br>
-          🔹 <b>Gemini</b>: גש ל-<code style="background:var(--bg);padding:1px 5px;border-radius:4px">aistudio.google.com</code> ← Get API Key
+          🔹 <b>Groq (recommended)</b>: go to <code style="background:var(--bg);padding:1px 5px;border-radius:4px">console.groq.com</code> → Create account → API Keys → Create Key<br>
+          🔹 <b>Gemini</b>: go to <code style="background:var(--bg);padding:1px 5px;border-radius:4px">aistudio.google.com</code> → Get API Key
         </div>
       </div>
     </div>
@@ -646,11 +646,11 @@ async function renderAI() {
 }
 
 async function updateAISetting(key, value) {
-  if (!state.syncPayload) { toast('אין נתוני סנכרון', 'err'); return; }
+  if (!state.syncPayload) { toast('No sync data', 'err'); return; }
   state.syncPayload[key] = value;
   try {
     await saveSyncPayload(state.syncPayload);
-    toast('נשמר ✓');
+    toast('Saved ✓');
     // Update model card UI
     if (key === 'subtitleAiModel') {
       document.querySelectorAll('.model-card').forEach(card => {
@@ -659,7 +659,7 @@ async function updateAISetting(key, value) {
       });
     }
   } catch (e) {
-    toast('שגיאה בשמירה', 'err');
+    toast('Failed to save', 'err');
   }
 }
 
@@ -676,17 +676,17 @@ async function renderSettings() {
 
   main.innerHTML = `
     <div class="section-header">
-      <div><div class="section-title">הגדרות</div><div class="section-sub">הגדרות כלליות לחשבון</div></div>
+      <div><div class="section-title">Settings</div><div class="section-sub">General account settings</div></div>
     </div>
 
     <div class="card">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px">מראה</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px">Appearance</div>
 
       <div class="form-group">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
-            <div style="font-weight:600">רקע OLED שחור</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">רקע שחור לחלוטין לחיסכון בסוללה</div>
+            <div style="font-weight:600">OLED Black Background</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Pure black background to save battery on OLED screens</div>
           </div>
           <label class="toggle">
             <input type="checkbox" ${oled?'checked':''} onchange="updateSetting('oledBlackBackground',this.checked)">
@@ -696,15 +696,15 @@ async function renderSettings() {
       </div>
 
       <div class="form-group">
-        <label class="form-label">פריסת כרטיסי מדיה</label>
+        <label class="form-label">Media Card Layout</label>
         <select class="form-select" onchange="updateSetting('cardLayoutMode',this.value)">
-          <option value="landscape" ${cardLayout==='landscape'?'selected':''}>Landscape (רוחב)</option>
-          <option value="portrait" ${cardLayout==='portrait'?'selected':''}>Portrait (אנכי)</option>
+          <option value="landscape" ${cardLayout==='landscape'?'selected':''}>Landscape</option>
+          <option value="portrait" ${cardLayout==='portrait'?'selected':''}>Portrait</option>
         </select>
       </div>
 
       <div class="form-group">
-        <label class="form-label">שפת ממשק</label>
+        <label class="form-label">App Language</label>
         <select class="form-select" onchange="updateSetting('lastAppLanguage',this.value)">
           <option value="en" ${lang==='en'?'selected':''}>English</option>
           <option value="he" ${lang==='he'?'selected':''}>עברית</option>
@@ -719,12 +719,12 @@ async function renderSettings() {
     </div>
 
     <div class="card">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px">פרופיל</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px">Profile</div>
       <div class="form-group">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
-            <div style="font-weight:600">דלג על בחירת פרופיל</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">עבור ישירות לאפליקציה עם הפרופיל הפעיל</div>
+            <div style="font-weight:600">Skip Profile Selection</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Launch directly into the app with the active profile</div>
           </div>
           <label class="toggle">
             <input type="checkbox" ${skipProfile?'checked':''} onchange="updateSetting('skipProfileSelection',this.checked)">
@@ -735,29 +735,29 @@ async function renderSettings() {
     </div>
 
     <div class="card">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px">חשבון</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px">Account</div>
       <div class="list-item" style="padding:10px 0;border:none">
         <div class="item-info">
-          <div class="item-title">מזהה משתמש</div>
+          <div class="item-title">User ID</div>
           <div class="item-sub" style="font-family:monospace;font-size:11px">${state.userId}</div>
         </div>
       </div>
       <button class="btn btn-danger" onclick="signOut()" style="margin-top:8px">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        התנתק
+        Sign out
       </button>
     </div>
   `;
 }
 
 async function updateSetting(key, value) {
-  if (!state.syncPayload) { toast('אין נתוני סנכרון', 'err'); return; }
+  if (!state.syncPayload) { toast('No sync data', 'err'); return; }
   state.syncPayload[key] = value;
   try {
     await saveSyncPayload(state.syncPayload);
-    toast('נשמר ✓');
+    toast('Saved ✓');
   } catch (e) {
-    toast('שגיאה בשמירה', 'err');
+    toast('Failed to save', 'err');
   }
 }
 
@@ -766,13 +766,13 @@ function timeAgo(iso) {
   if (!iso) return '';
   const d = Date.now() - new Date(iso).getTime();
   const m = Math.floor(d / 60000);
-  if (m < 1) return 'עכשיו';
-  if (m < 60) return `לפני ${m} דק׳`;
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `לפני ${h} שע׳`;
+  if (h < 24) return `${h}h ago`;
   const days = Math.floor(h / 24);
-  if (days < 30) return `לפני ${days} ימים`;
-  return new Date(iso).toLocaleDateString('he-IL');
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString('en-US');
 }
 
 function formatDuration(secs) {
@@ -793,21 +793,21 @@ function emptyState(msg) {
 
 // ── Shell ─────────────────────────────────────────────────────────────────
 function buildShell(user) {
-  const name = user.user_metadata?.full_name || user.email || 'משתמש';
+  const name = user.user_metadata?.full_name || user.email || 'User';
   const avatar = user.user_metadata?.avatar_url || '';
   const email = user.email || '';
   const initial = name[0].toUpperCase();
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>' },
-    { id: 'profiles', label: 'פרופילים', icon: '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' },
-    { id: 'addons', label: 'הרחבות', icon: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h6M9 15h4"/>' },
+    { id: 'profiles', label: 'Profiles', icon: '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' },
+    { id: 'addons', label: 'Add-ons', icon: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6M9 12h6M9 15h4"/>' },
     { id: 'iptv', label: 'IPTV', icon: '<path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
-    { id: 'plugins', label: 'פלאגינים', icon: '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>' },
-    { id: 'history', label: 'היסטוריה', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' },
-    { id: 'watchlist', label: 'רשימת צפייה', icon: '<path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/>' },
-    { id: 'ai', label: 'תרגום AI', icon: '<path d="M12 2a3 3 0 013 3v7a3 3 0 01-6 0V5a3 3 0 013-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>' },
-    { id: 'settings', label: 'הגדרות', icon: '<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M1 12h2M21 12h2M12 1v2M12 21v2"/>' },
+    { id: 'plugins', label: 'Plugins', icon: '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>' },
+    { id: 'history', label: 'History', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' },
+    { id: 'watchlist', label: 'Watchlist', icon: '<path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/>' },
+    { id: 'ai', label: 'AI Subtitles', icon: '<path d="M12 2a3 3 0 013 3v7a3 3 0 01-6 0V5a3 3 0 013-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>' },
+    { id: 'settings', label: 'Settings', icon: '<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M1 12h2M21 12h2M12 1v2M12 21v2"/>' },
   ];
 
   document.getElementById('app-screen').innerHTML = `
@@ -832,7 +832,7 @@ function buildShell(user) {
           <div class="user-name">${name}</div>
           <div class="user-email">${email}</div>
         </div>
-        <button class="btn-logout" onclick="signOut()" title="התנתק">
+        <button class="btn-logout" onclick="signOut()" title="Sign out">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
