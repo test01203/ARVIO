@@ -286,6 +286,7 @@ const sections = {
   watchlist: renderWatchlist,
   ai: renderAI,
   settings: renderSettings,
+  tvpair: renderTVPair,
 };
 
 function navigate(id) {
@@ -1030,6 +1031,7 @@ function buildShell(user) {
     { id: 'watchlist', label: t('nav_watchlist'), icon: '<path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/>' },
     { id: 'ai', label: t('nav_ai'), icon: '<path d="M12 2a3 3 0 013 3v7a3 3 0 01-6 0V5a3 3 0 013-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>' },
     { id: 'settings', label: t('nav_settings'), icon: '<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M1 12h2M21 12h2M12 1v2M12 21v2"/>' },
+    { id: 'tvpair', label: currentLang === 'he' ? '📺 TV' : '📺 TV', icon: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>' },
   ];
 
   document.getElementById('app-screen').innerHTML = `
@@ -1066,8 +1068,95 @@ function buildShell(user) {
   `;
 }
 
+// ── TV Pairing ────────────────────────────────────────────────────────────
+
+async function renderTVPair() {
+  const main = document.getElementById('main-content');
+  const tvCode = new URLSearchParams(location.search).get('tv') || '';
+
+  main.innerHTML = `
+    <div class="section-header">
+      <div>
+        <div class="section-title">📺 ${currentLang === 'he' ? 'חיבור טלוויזיה' : 'Connect TV'}</div>
+        <div class="section-sub">${currentLang === 'he' ? 'הזן את הקוד המוצג בטלוויזיה' : 'Enter the code shown on your TV'}</div>
+      </div>
+    </div>
+    <div class="card" style="max-width:480px">
+      <div class="form-group">
+        <label class="form-label">${currentLang === 'he' ? 'קוד מהטלוויזיה' : 'Code from TV'}</label>
+        <input id="tv-code-input" class="form-select"
+          placeholder="AB3K7F"
+          value="${escapeHtml(tvCode)}"
+          maxlength="6"
+          oninput="this.value=this.value.toUpperCase()"
+          style="font-size:28px;text-align:center;letter-spacing:10px;text-transform:uppercase;font-weight:bold;padding:16px">
+      </div>
+      <button onclick="doTVPair(document.getElementById('tv-code-input').value.trim())"
+        style="width:100%;background:#F5C442;color:#000;font-weight:700;font-size:16px;padding:14px;border:none;border-radius:8px;cursor:pointer">
+        ${currentLang === 'he' ? '🔗 חבר טלוויזיה' : '🔗 Connect TV'}
+      </button>
+      <div id="tvpair-status" style="margin-top:16px;font-size:15px;text-align:center;min-height:24px"></div>
+    </div>
+  `;
+
+  if (tvCode && state.session) {
+    setTimeout(() => doTVPair(tvCode), 600);
+  }
+}
+
+async function doTVPair(code) {
+  if (!code || code.length < 4) return;
+  if (!state.session) {
+    toast(currentLang === 'he' ? 'אנא התחבר קודם' : 'Please sign in first', 'err');
+    return;
+  }
+
+  const statusEl = document.getElementById('tvpair-status');
+  if (!statusEl) return;
+  statusEl.style.color = 'var(--text-muted)';
+  statusEl.textContent = currentLang === 'he' ? '⏳ מתחבר לטלוויזיה...' : '⏳ Connecting to TV...';
+
+  let channel;
+  try {
+    channel = db.channel(`tv:${code.toUpperCase()}`);
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('connection timeout')), 8000);
+      channel.subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') { clearTimeout(timer); resolve(); }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { clearTimeout(timer); reject(err || new Error(status)); }
+      });
+    });
+
+    const { error } = await channel.send({
+      type: 'broadcast',
+      event: 'auth',
+      payload: {
+        access_token: state.session.access_token,
+        refresh_token: state.session.refresh_token,
+        user_id: state.userId,
+      },
+    });
+
+    if (error) throw new Error(error.message);
+
+    statusEl.style.color = '#4CAF50';
+    statusEl.textContent = currentLang === 'he'
+      ? '✓ הטלוויזיה התחברה בהצלחה! ניתן לסגור את הדף.'
+      : '✓ TV connected! You can close this page.';
+  } catch (e) {
+    statusEl.style.color = '#EF5350';
+    statusEl.textContent = (currentLang === 'he' ? 'שגיאה: ' : 'Error: ') + (e?.message || String(e));
+  } finally {
+    if (channel) await db.removeChannel(channel);
+  }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────
 async function boot() {
+  const tvCode = new URLSearchParams(location.search).get('tv');
+  if (tvCode) state.activeSection = 'tvpair';
+
   const { data: { session } } = await db.auth.getSession();
 
   if (!session) {
