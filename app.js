@@ -202,8 +202,6 @@ function setLang(lang) {
   // Re-render auth text if on auth screen
   const authSub = document.querySelector('.auth-sub');
   if (authSub) authSub.textContent = t('auth_sub');
-  const authBtn = document.querySelector('.btn-google');
-  if (authBtn) authBtn.childNodes[authBtn.childNodes.length - 1].textContent = ' ' + t('auth_google');
   // Re-render app if logged in
   if (state.session) {
     buildShell(state.session.user);
@@ -230,12 +228,31 @@ function toast(msg, type = 'ok') {
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
-async function signInGoogle() {
-  const { error } = await db.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.href },
+async function sendMagicLink() {
+  const emailEl = document.getElementById('auth-email-input');
+  const statusEl = document.getElementById('auth-status');
+  const email = emailEl?.value?.trim();
+  if (!email) return;
+
+  statusEl.style.color = '#aaa';
+  statusEl.textContent = currentLang === 'he' ? 'שולח...' : 'Sending...';
+  emailEl.disabled = true;
+
+  const { error } = await db.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.href },
   });
-  if (error) toast(error.message, 'err');
+
+  emailEl.disabled = false;
+  if (error) {
+    statusEl.style.color = '#EF5350';
+    statusEl.textContent = error.message;
+  } else {
+    statusEl.style.color = '#4CAF50';
+    statusEl.textContent = currentLang === 'he'
+      ? '✓ הקישור נשלח! בדוק את תיבת הדואר ולחץ על הלינק.'
+      : '✓ Magic link sent! Check your email and click the link.';
+  }
 }
 
 async function signOut() {
