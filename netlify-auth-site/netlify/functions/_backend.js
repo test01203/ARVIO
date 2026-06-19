@@ -571,6 +571,8 @@ async function completePasswordSetup(event, token, password) {
     accountId: existing?.accountId || pending.accountId,
     email: pending.email,
     passwordHash: await hashPassword(password),
+    passwordSetupCompletedAt: new Date().toISOString(),
+    migrationSource: "password_setup",
     migratedAt: existing?.migratedAt || new Date().toISOString(),
     createdAt: existing?.createdAt || new Date().toISOString()
   });
@@ -580,24 +582,43 @@ async function completePasswordSetup(event, token, password) {
   return issueArvioSession(event, account);
 }
 
+function requiresExplicitPasswordSetup(account) {
+  return account?.migrationSource === "supabase_password_bridge" && !account?.passwordSetupCompletedAt;
+}
+
+async function throwPasswordSetupRequired(event, email, message) {
+  const error = new Error(message);
+  error.statusCode = 409;
+  error.code = "password_setup_required";
+  try {
+    const setup = await startPasswordSetup(event, email);
+    error.emailSent = !!setup.emailSent;
+    error.emailProvider = setup.emailProvider || null;
+    error.emailId = setup.emailId || null;
+  } catch (sendError) {
+    error.emailSent = false;
+    error.setupError = publicError(sendError, "Password setup email failed");
+  }
+  throw error;
+}
+
 async function authenticateNetlifyPassword(event, email, password) {
   const account = await loadAuthAccount(event, email);
+  if (requiresExplicitPasswordSetup(account)) {
+    await throwPasswordSetupRequired(
+      event,
+      email,
+      "ARVIO Cloud moved to a new secure server. To keep your data protected, create a new ARVIO Cloud password from the email we sent you."
+    );
+  }
   if (!account || !account.passwordHash) {
     const legacy = account ? null : await loadLegacyAccountReference(event, email);
     if (legacy || account) {
-      const error = new Error("ARVIO Cloud moved to a new secure server. To keep your data protected, create a new ARVIO Cloud password from the email we sent you.");
-      error.statusCode = 409;
-      error.code = "password_setup_required";
-      try {
-        const setup = await startPasswordSetup(event, email);
-        error.emailSent = !!setup.emailSent;
-        error.emailProvider = setup.emailProvider || null;
-        error.emailId = setup.emailId || null;
-      } catch (sendError) {
-        error.emailSent = false;
-        error.setupError = publicError(sendError, "Password setup email failed");
-      }
-      throw error;
+      await throwPasswordSetupRequired(
+        event,
+        email,
+        "ARVIO Cloud moved to a new secure server. To keep your data protected, create a new ARVIO Cloud password from the email we sent you."
+      );
     }
     const error = new Error("Invalid email or password");
     error.statusCode = 401;
@@ -615,20 +636,19 @@ async function authenticateNetlifyPassword(event, email, password) {
 async function createNetlifyAccount(event, email, password) {
   const existing = await loadAuthAccount(event, email);
   const legacy = existing ? null : await loadLegacyAccountReference(event, email);
+  if (requiresExplicitPasswordSetup(existing)) {
+    await throwPasswordSetupRequired(
+      event,
+      email,
+      "ARVIO Cloud moved to a new secure server. Create a new ARVIO Cloud password to keep your existing data."
+    );
+  }
   if (legacy && !existing?.passwordHash) {
-    const error = new Error("ARVIO Cloud moved to a new secure server. Create a new ARVIO Cloud password to keep your existing data.");
-    error.statusCode = 409;
-    error.code = "password_setup_required";
-    try {
-      const setup = await startPasswordSetup(event, email);
-      error.emailSent = !!setup.emailSent;
-      error.emailProvider = setup.emailProvider || null;
-      error.emailId = setup.emailId || null;
-    } catch (sendError) {
-      error.emailSent = false;
-      error.setupError = publicError(sendError, "Password setup email failed");
-    }
-    throw error;
+    await throwPasswordSetupRequired(
+      event,
+      email,
+      "ARVIO Cloud moved to a new secure server. Create a new ARVIO Cloud password to keep your existing data."
+    );
   }
   if (existing?.passwordHash) {
     const error = new Error("Account already exists. Sign in instead.");
