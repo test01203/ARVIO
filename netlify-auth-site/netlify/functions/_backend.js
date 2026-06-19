@@ -470,8 +470,11 @@ async function sendPasswordSetupEmail(email, setupUrl) {
       },
       body: JSON.stringify({ from, to: [email], subject, html, text })
     });
-    if (!response.ok) throw new Error(`Email delivery failed (${response.status})`);
-    return;
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Email delivery failed (${response.status}): ${publicError(result, response.statusText)}`);
+    }
+    return { provider, id: result?.id || null };
   }
 
   if (provider === "postmark") {
@@ -483,8 +486,11 @@ async function sendPasswordSetupEmail(email, setupUrl) {
       },
       body: JSON.stringify({ From: from, To: email, Subject: subject, HtmlBody: html, TextBody: text })
     });
-    if (!response.ok) throw new Error(`Email delivery failed (${response.status})`);
-    return;
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Email delivery failed (${response.status}): ${publicError(result, response.statusText)}`);
+    }
+    return { provider, id: result?.MessageID || result?.MessageId || null };
   }
 
   if (provider === "sendgrid") {
@@ -505,7 +511,9 @@ async function sendPasswordSetupEmail(email, setupUrl) {
       })
     });
     if (!response.ok) throw new Error(`Email delivery failed (${response.status})`);
+    return { provider, id: response.headers.get("x-message-id") || null };
   }
+  return { provider, id: null };
 }
 
 async function startPasswordSetup(event, email) {
@@ -535,8 +543,13 @@ async function startPasswordSetup(event, email) {
 
   const baseUrl = (process.env.SITE_URL || process.env.TV_AUTH_VERIFY_BASE_URL || "https://auth.arvio.tv").replace(/\/+$/, "");
   const setupUrl = `${baseUrl}/?mode=set-password&token=${encodeURIComponent(token)}`;
-  await sendPasswordSetupEmail(normalizedEmail, setupUrl);
-  return { exists: true, emailSent: true };
+  const emailResult = await sendPasswordSetupEmail(normalizedEmail, setupUrl);
+  return {
+    exists: true,
+    emailSent: true,
+    emailProvider: emailResult?.provider || emailProviderName(),
+    emailId: emailResult?.id || null
+  };
 }
 
 async function completePasswordSetup(event, token, password) {
@@ -578,6 +591,8 @@ async function authenticateNetlifyPassword(event, email, password) {
       try {
         const setup = await startPasswordSetup(event, email);
         error.emailSent = !!setup.emailSent;
+        error.emailProvider = setup.emailProvider || null;
+        error.emailId = setup.emailId || null;
       } catch (sendError) {
         error.emailSent = false;
         error.setupError = publicError(sendError, "Password setup email failed");
@@ -607,6 +622,8 @@ async function createNetlifyAccount(event, email, password) {
     try {
       const setup = await startPasswordSetup(event, email);
       error.emailSent = !!setup.emailSent;
+      error.emailProvider = setup.emailProvider || null;
+      error.emailId = setup.emailId || null;
     } catch (sendError) {
       error.emailSent = false;
       error.setupError = publicError(sendError, "Password setup email failed");
@@ -649,6 +666,8 @@ async function handleAuthLogin(event) {
         code: "password_setup_required",
         error: error.message,
         email_sent: !!error.emailSent,
+        email_provider: error.emailProvider || null,
+        email_id: error.emailId || null,
         setup_error: error.setupError || null
       });
     }
@@ -671,7 +690,9 @@ async function handleAuthPasswordStart(event) {
     return json(200, {
       ok: true,
       email_sent: !!setup.emailSent,
-      account_exists: !!setup.exists
+      account_exists: !!setup.exists,
+      email_provider: setup.emailProvider || null,
+      email_id: setup.emailId || null
     });
   } catch (error) {
     return handlerError(event, error, "Password setup failed");
@@ -782,6 +803,8 @@ async function handleCloudAuthEmail(event) {
         code: "password_setup_required",
         error: error.message,
         email_sent: !!error.emailSent,
+        email_provider: error.emailProvider || null,
+        email_id: error.emailId || null,
         setup_error: error.setupError || null
       });
     }
@@ -801,7 +824,13 @@ async function handleCloudAuthReset(event) {
     const emailError = validateEmail(email, true);
     if (emailError) return json(400, { error: emailError });
     const setup = await startPasswordSetup(event, email);
-    return json(200, { ok: true, email_sent: !!setup.emailSent, account_exists: !!setup.exists });
+    return json(200, {
+      ok: true,
+      email_sent: !!setup.emailSent,
+      account_exists: !!setup.exists,
+      email_provider: setup.emailProvider || null,
+      email_id: setup.emailId || null
+    });
   } catch (error) {
     return handlerError(event, error, "Password reset failed");
   }
@@ -970,6 +999,8 @@ async function handleTvAuthComplete(event) {
         code: "password_setup_required",
         error: error.message,
         email_sent: !!error.emailSent,
+        email_provider: error.emailProvider || null,
+        email_id: error.emailId || null,
         setup_error: error.setupError || null
       });
     }

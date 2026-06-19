@@ -887,9 +887,9 @@
     forgotBtn.onclick = async () => {
       try {
         setBusy(true);
-        setStatus("Sending reset email...");
+        setStatus("Sending new password email...");
         await sendPasswordReset();
-        setStatus("Password reset email sent. Check your inbox.", "ok");
+        setStatus("New password email sent. Check your inbox and spam folder.", "ok");
       } catch (err) {
         setStatus(err.message || String(err), "error");
       } finally {
