@@ -425,6 +425,39 @@ class AuthRepository @Inject constructor(
 
             val hasAccessToken = !accessToken.isNullOrBlank()
             val hasRefreshToken = !refreshToken.isNullOrBlank()
+
+            if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+                val shouldRefreshNetlifyToken = !hasAccessToken || isJwtExpired(accessToken ?: "")
+                val usableAccessToken = when {
+                    !shouldRefreshNetlifyToken -> accessToken
+                    hasRefreshToken -> refreshNetlifyAccessToken(refreshToken ?: "")
+                    else -> null
+                }
+                val userId = cachedUserId
+                    ?: usableAccessToken?.let { extractUserIdFromAccessToken(it) }
+                val email = cachedEmail
+                    ?: usableAccessToken?.let { extractUserEmailFromAccessToken(it) }
+                    ?: ""
+
+                if (!userId.isNullOrBlank()) {
+                    if (!shouldRefreshNetlifyToken && !usableAccessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()) {
+                        storeRawSessionTokens(
+                            accessToken = usableAccessToken,
+                            refreshToken = refreshToken,
+                            userId = userId,
+                            email = email
+                        )
+                    }
+                    val profile = UserProfile(id = userId, email = email)
+                    traktRepositoryProvider.get().setUserId(userId)
+                    _userProfile.value = profile
+                    _authState.value = AuthState.Authenticated(userId, email, profile)
+                } else {
+                    _authState.value = AuthState.NotAuthenticated
+                }
+                return
+            }
+
             var session: UserSession? = null
 
             // Supabase SDK requires main thread for initialization (lifecycle observers)
@@ -626,8 +659,8 @@ class AuthRepository @Inject constructor(
 
             val request = Request.Builder()
                 .url(url)
-                .header("apikey", Constants.SUPABASE_ANON_KEY)
-                .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+                .header("apikey", Constants.APP_ANON_KEY)
+                .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
                 .post(payload.toRequestBody(jsonMediaType))
                 .build()
 
@@ -816,9 +849,11 @@ class AuthRepository @Inject constructor(
         // Push final state before signing out
         try { cloudSyncRepositoryProvider.get().pushToCloud() } catch (_: Exception) {}
 
-        try {
-            supabase.auth.signOut()
-        } catch (e: Exception) {
+        if (!Constants.USE_NETLIFY_CLOUD_SYNC) {
+            try {
+                supabase.auth.signOut()
+            } catch (e: Exception) {
+            }
         }
 
         try {
@@ -908,6 +943,10 @@ class AuthRepository @Inject constructor(
      * Update user profile
      */
     suspend fun updateProfile(profile: UserProfile): Result<Unit> {
+        if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+            _userProfile.value = profile
+            return Result.success(Unit)
+        }
         return try {
             supabase.postgrest
                 .from("profiles")
@@ -1039,6 +1078,8 @@ class AuthRepository @Inject constructor(
             try {
                 val request = Request.Builder()
                     .url(Constants.AUTH_REFRESH_URL)
+                    .header("apikey", Constants.APP_ANON_KEY)
+                    .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
                     .post(
                         JSONObject()
                             .put("refresh_token", refreshToken)
@@ -1216,6 +1257,9 @@ class AuthRepository @Inject constructor(
      */
     suspend fun getAddonsFromProfileFresh(): Result<String?> {
         val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
+        if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+            return Result.success(_userProfile.value?.addons)
+        }
         return try {
             val session = ensureValidSession()
             if (session == null) return Result.failure(Exception("Session expired"))
@@ -1253,6 +1297,18 @@ class AuthRepository @Inject constructor(
      */
     suspend fun saveAddonsToProfile(addonsJson: String): Result<Unit> {
         val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
+        if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+            val currentProfile = _userProfile.value
+            val resolvedEmail = currentProfile?.email
+                ?: (authState.value as? AuthState.Authenticated)?.email
+                ?: ""
+            _userProfile.value = (currentProfile ?: UserProfile(id = userId, email = resolvedEmail)).copy(
+                id = userId,
+                email = resolvedEmail,
+                addons = addonsJson
+            )
+            return Result.success(Unit)
+        }
         return try {
             val session = ensureValidSession()
             if (session == null) return Result.failure(Exception("Session expired"))
@@ -1295,6 +1351,11 @@ class AuthRepository @Inject constructor(
         val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
         val currentProfile = _userProfile.value ?: return Result.failure(Exception("No profile"))
 
+        if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+            _userProfile.value = currentProfile.copy(default_subtitle = subtitle)
+            return Result.success(Unit)
+        }
+
         return try {
             ensureValidSession()
             @Serializable
@@ -1326,6 +1387,11 @@ class AuthRepository @Inject constructor(
     suspend fun saveAutoPlayNextToProfile(autoPlayNext: Boolean): Result<Unit> {
         val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
         val currentProfile = _userProfile.value ?: return Result.failure(Exception("No profile"))
+
+        if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+            _userProfile.value = currentProfile.copy(auto_play_next = autoPlayNext)
+            return Result.success(Unit)
+        }
 
         return try {
             ensureValidSession()

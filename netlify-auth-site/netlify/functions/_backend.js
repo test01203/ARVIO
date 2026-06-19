@@ -58,7 +58,7 @@ function parseBody(event) {
 }
 
 function appAnonKey() {
-  return process.env.APP_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+  return process.env.APP_ANON_KEY || "";
 }
 
 function assertAppRequest(event) {
@@ -73,16 +73,6 @@ function assertAppRequest(event) {
   const error = new Error("Unauthorized");
   error.statusCode = 401;
   throw error;
-}
-
-function supabaseConfig() {
-  const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
-  const anonKey = appAnonKey();
-  const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!supabaseUrl || !anonKey) {
-    throw new Error("Supabase Auth verifier is not configured");
-  }
-  return { supabaseUrl, anonKey, serviceRole };
 }
 
 function errorMessage(error) {
@@ -549,9 +539,6 @@ async function completePasswordSetup(event, token, password) {
 async function authenticateNetlifyPassword(event, email, password) {
   const account = await loadAuthAccount(event, email);
   if (!account || !account.passwordHash) {
-    const migrated = await migrateSupabasePasswordIfValid(event, email, password);
-    if (migrated) return migrated;
-
     const legacySnapshot = account ? null : await loadLegacySnapshotByEmail(event, email);
     if (legacySnapshot || account) {
       const error = new Error("ARVIO Cloud moved to a new secure server. To keep your data protected, create a new ARVIO Cloud password from the email we sent you.");
@@ -577,24 +564,6 @@ async function authenticateNetlifyPassword(event, email, password) {
     throw error;
   }
   return issueArvioSession(event, account);
-}
-
-async function migrateSupabasePasswordIfValid(event, email, password) {
-  try {
-    const token = await supabasePasswordToken(email, password);
-    const userId = token.user?.id || legacyAccountIdForEmail(email);
-    const account = await saveAuthAccount(event, {
-      accountId: userId,
-      email,
-      passwordHash: await hashPassword(password),
-      migratedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      migrationSource: "supabase_password_bridge"
-    });
-    return issueArvioSession(event, account);
-  } catch (error) {
-    return null;
-  }
 }
 
 async function createNetlifyAccount(event, email, password) {
@@ -694,82 +663,6 @@ async function handleAuthPasswordComplete(event) {
   } catch (error) {
     return handlerError(event, error, "Password setup failed");
   }
-}
-
-async function supabasePasswordToken(email, password) {
-  const { supabaseUrl, anonKey } = supabaseConfig();
-  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ email, password })
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    const error = new Error(parseAuthError(text));
-    error.statusCode = response.status;
-    throw error;
-  }
-  return JSON.parse(text);
-}
-
-async function createConfirmedSupabaseUser(email, password) {
-  const { supabaseUrl, serviceRole } = supabaseConfig();
-  if (!serviceRole) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
-  }
-  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
-    method: "POST",
-    headers: {
-      apikey: serviceRole,
-      authorization: `Bearer ${serviceRole}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { provider: "email" }
-    })
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    const message = parseAuthError(text);
-    const lower = message.toLowerCase();
-    const alreadyExists = response.status === 409 ||
-      response.status === 422 ||
-      lower.includes("already") ||
-      lower.includes("registered") ||
-      lower.includes("exists");
-    if (!alreadyExists) {
-      const error = new Error("Unable to create account");
-      error.statusCode = 400;
-      throw error;
-    }
-    return { alreadyExists: true };
-  }
-  return text ? JSON.parse(text) : {};
-}
-
-async function refreshSupabaseSession(refreshToken) {
-  const { supabaseUrl, anonKey } = supabaseConfig();
-  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ refresh_token: refreshToken })
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    const error = new Error(parseAuthError(text));
-    error.statusCode = response.status;
-    throw error;
-  }
-  return JSON.parse(text);
 }
 
 function randomCode(length) {
@@ -889,13 +782,11 @@ async function handleAuthRefresh(event) {
   const wrongMethod = methodGuard(event, ["POST"]);
   if (wrongMethod) return wrongMethod;
   try {
+    assertAppRequest(event);
     const body = parseBody(event);
     const refreshToken = String(body.refresh_token || "").trim();
     if (!refreshToken) return json(400, { error: "refresh_token is required" });
-    const token = await refreshArvioSession(event, refreshToken).catch(async (netlifyError) => {
-      if (String(netlifyError?.message || "").includes("ARVIO_AUTH_SECRET")) throw netlifyError;
-      return refreshSupabaseSession(refreshToken);
-    });
+    const token = await refreshArvioSession(event, refreshToken);
     return json(200, token);
   } catch (error) {
     return handlerError(event, error, "Session refresh failed");
@@ -1303,30 +1194,6 @@ function isExistingSnapshotRicher(existing, incoming) {
   return existingCoverage > incoming.scopedCoverage;
 }
 
-async function verifySupabaseToken(accessToken) {
-  const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
-  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || "";
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error("Supabase migration verifier is not configured");
-  }
-  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: {
-      apikey: supabaseAnonKey,
-      authorization: `Bearer ${accessToken}`
-    }
-  });
-  if (!response.ok) {
-    throw new Error(`Supabase token rejected (${response.status})`);
-  }
-  const user = await response.json();
-  const id = user.id || user.sub;
-  const email = normalizeEmail(user.email);
-  if (!id || !email) {
-    throw new Error("Supabase token has no usable user identity");
-  }
-  return { supabaseUserId: id, email };
-}
-
 function bearerToken(event) {
   const auth = event.headers.authorization || event.headers.Authorization || "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
@@ -1340,14 +1207,10 @@ async function resolveIdentity(event) {
   }
   try {
     return verifyArvioAccessToken(token);
-  } catch (netlifyError) {
-    try {
-      return await verifySupabaseToken(token);
-    } catch (supabaseError) {
-      const error = new Error(`Token rejected (${publicError(netlifyError)}; ${publicError(supabaseError)})`);
-      error.statusCode = 401;
-      throw error;
-    }
+  } catch (error) {
+    const rejected = new Error(`Token rejected (${publicError(error)})`);
+    rejected.statusCode = 401;
+    throw rejected;
   }
 }
 

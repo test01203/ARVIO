@@ -74,8 +74,8 @@ class ApiProxyInterceptor : Interceptor {
 
         return originalRequest.newBuilder()
             .url(proxyUrlBuilder.build())
-            .header("apikey", Constants.SUPABASE_ANON_KEY)
-            .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+            .header("apikey", Constants.APP_ANON_KEY)
+            .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
             .build()
     }
 
@@ -104,8 +104,8 @@ class ApiProxyInterceptor : Interceptor {
 
         val requestBuilder = originalRequest.newBuilder()
             .url(proxyUrlBuilder.build())
-            .header("apikey", Constants.SUPABASE_ANON_KEY)
-            .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+            .header("apikey", Constants.APP_ANON_KEY)
+            .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
             .header("Cache-Control", "no-store")
 
         // Forward user token in custom header

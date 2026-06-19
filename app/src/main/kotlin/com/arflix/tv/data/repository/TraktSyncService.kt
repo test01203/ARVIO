@@ -1780,6 +1780,9 @@ class TraktSyncService @Inject constructor(
         operation: String,
         block: suspend (String) -> T
     ): T {
+        if (Constants.USE_NETLIFY_CLOUD_SYNC) {
+            throw IllegalStateException("Legacy Supabase Trakt sync is disabled in Netlify mode")
+        }
         // Try getting auth, force-refresh if initial attempt fails
         var auth = getSupabaseAuth()
         if (auth == null) {
@@ -1874,8 +1877,8 @@ class TraktSyncService @Inject constructor(
             .toString()
         val request = Request.Builder()
             .url(url)
-            .header("apikey", Constants.SUPABASE_ANON_KEY)
-            .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+            .header("apikey", Constants.APP_ANON_KEY)
+            .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
             .post(payload.toRequestBody(jsonMediaType))
             .build()
 

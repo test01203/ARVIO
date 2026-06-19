@@ -502,13 +502,9 @@
   </script>
 
   <script type="module">
-    import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-
-    const SUPABASE_URL = "https://zrdwvortcfnoykltzuqf.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpyZHd2b3J0Y2Zub3lrbHR6dXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3NDU4NzMsImV4cCI6MjA4MjMyMTg3M30.YfKZbSwxGs6_xMd6jkDtn1PKkfuyOHo9qVhUvFRddGU";
+    const APP_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpyZHd2b3J0Y2Zub3lrbHR6dXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3NDU4NzMsImV4cCI6MjA4MjMyMTg3M30.YfKZbSwxGs6_xMd6jkDtn1PKkfuyOHo9qVhUvFRddGU";
 
     const FUNCTION_BASE = "/.netlify/functions";
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const qs = new URLSearchParams(window.location.search);
     const pairCode = (qs.get("code") || "").trim();
 
@@ -680,28 +676,6 @@
     }
     if (isRecoveryMode || isPasswordSetupMode) applyRecoveryModeUi();
 
-    async function approveTvIfNeeded() {
-      if (!pairCode) return;
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!session?.access_token || !session?.refresh_token) {
-        throw new Error("No active session for TV pairing.");
-      }
-
-      const resp = await fetch(`${FUNCTION_BASE}/tv-auth-approve`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ code: pairCode, refresh_token: session.refresh_token }),
-      });
-
-      const json = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(json.error || "TV pairing failed");
-    }
-
     async function approveTvViaServer(email, password) {
       if (!pairCode) return;
       const normalizedEmail = requireValidEmail(email, false);
@@ -709,8 +683,8 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: APP_ANON_KEY,
+          Authorization: `Bearer ${APP_ANON_KEY}`,
         },
         body: JSON.stringify({
           action: "signin",
@@ -731,8 +705,8 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: APP_ANON_KEY,
+          Authorization: `Bearer ${APP_ANON_KEY}`,
         },
         body: JSON.stringify({
           code: pairCode,
@@ -752,8 +726,8 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: APP_ANON_KEY,
+          Authorization: `Bearer ${APP_ANON_KEY}`,
         },
         body: JSON.stringify({
           email: normalizedEmail,
@@ -776,13 +750,18 @@
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: APP_ANON_KEY,
+          Authorization: `Bearer ${APP_ANON_KEY}`,
         },
         body: JSON.stringify({ email, password })
       });
       const json = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(json.error || "Sign in failed");
+      if (!resp.ok) {
+        const setupHint = json.code === "password_setup_required" && json.email_sent
+          ? " Check your email to create the new password."
+          : "";
+        throw new Error((json.error || "Sign in failed") + setupHint);
+      }
       return { email, password };
     }
 
@@ -797,17 +776,15 @@
     async function sendPasswordReset() {
       const email = requireValidEmail(emailEl.value);
       enforceEmailSendCooldown("reset", email);
-      const redirectTo = "https://auth.arvio.tv/?mode=recovery";
       const resp = await fetch(`${FUNCTION_BASE}/cloud-auth-reset`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: APP_ANON_KEY,
+          Authorization: `Bearer ${APP_ANON_KEY}`,
         },
         body: JSON.stringify({
-          email,
-          redirect_to: redirectTo
+          email
         })
       });
       const json = await resp.json().catch(() => ({}));
@@ -827,11 +804,7 @@
         if (!resp.ok) throw new Error(json.error || "Password setup failed");
         return;
       }
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!session) throw new Error("Recovery link expired. Request a new password reset email.");
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) throw error;
+      throw new Error("This password link is no longer valid. Request a new reset email.");
     }
 
     signInBtn.onclick = async () => {
@@ -839,9 +812,7 @@
         setBusy(true);
         setStatus("Signing in...");
         const creds = await signInEmail();
-        try {
-          await approveTvIfNeeded();
-        } catch (_pairErr) {
+        if (pairCode) {
           await approveTvViaServer(creds.email, creds.password);
         }
         setStatus(pairCode ? "TV paired. Redirecting..." : "Signed in. Redirecting...", "ok");
@@ -871,9 +842,7 @@
 
         setStatus("Creating account...");
         await signUpEmail();
-        try {
-          await approveTvIfNeeded();
-        } catch (_pairErr) {
+        if (pairCode) {
           await approveTvViaServer(email, password);
         }
         setStatus(pairCode ? "Account created and TV paired. Redirecting..." : "Account created. Redirecting...", "ok");

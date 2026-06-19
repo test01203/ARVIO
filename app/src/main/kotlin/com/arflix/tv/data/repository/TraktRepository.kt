@@ -19,9 +19,6 @@ import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.traktDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Deferred
@@ -84,16 +81,6 @@ class TraktRepository @Inject constructor(
 
     // Lazy sync service to avoid circular dependency
     private val syncService: TraktSyncService by lazy { syncServiceProvider.get() }
-
-    // Supabase client for profile sync (lazy to avoid startup overhead)
-    private val supabase: SupabaseClient by lazy {
-        createSupabaseClient(
-            supabaseUrl = Constants.SUPABASE_URL,
-            supabaseKey = Constants.SUPABASE_ANON_KEY
-        ) {
-            install(Postgrest)
-        }
-    }
 
     // User ID key for Supabase sync (shared across profiles)
     private val USER_ID_KEY = stringPreferencesKey("user_id")
@@ -249,8 +236,8 @@ class TraktRepository @Inject constructor(
             .build()
         val request = Request.Builder()
             .url(url)
-            .header("apikey", Constants.SUPABASE_ANON_KEY)
-            .header("Authorization", "Bearer ${Constants.SUPABASE_ANON_KEY}")
+            .header("apikey", Constants.APP_ANON_KEY)
+            .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
             .post(payload.toString().toRequestBody(jsonMediaType))
             .build()
 

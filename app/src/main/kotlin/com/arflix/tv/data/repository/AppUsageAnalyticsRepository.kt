@@ -91,7 +91,10 @@ class AppUsageAnalyticsRepository @Inject constructor(
                     requestBuilder.header("x-user-token", accessToken)
                 }
             } else {
-                requestBuilder.header("Cache-Control", "no-cache, no-store")
+                requestBuilder
+                    .header("apikey", Constants.APP_ANON_KEY)
+                    .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
+                    .header("Cache-Control", "no-cache, no-store")
             }
 
             okHttpClient.newCall(requestBuilder.build()).execute().use { response ->

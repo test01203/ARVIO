@@ -12,6 +12,7 @@ object Constants {
     // Supabase - keys from BuildConfig (secrets.properties).
     val SUPABASE_URL: String get() = BuildConfig.SUPABASE_URL
     val SUPABASE_ANON_KEY: String get() = BuildConfig.SUPABASE_ANON_KEY
+    val APP_ANON_KEY: String get() = BuildConfig.APP_ANON_KEY
     val NETLIFY_BACKEND_URL: String
         get() = BuildConfig.NETLIFY_BACKEND_URL.trim().trimEnd('/')
     val USE_NETLIFY_CLOUD_SYNC: Boolean

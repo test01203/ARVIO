@@ -45,6 +45,11 @@ android {
         buildConfigField("Boolean", "ENABLE_NETLIFY_CLOUD_SYNC", "true")
         buildConfigField("Boolean", "ENABLE_SUPABASE_SYNC_MIRROR", "false")
         buildConfigField("String", "NETLIFY_BACKEND_URL", "\"https://auth.arvio.tv/.netlify/functions\"")
+        buildConfigField(
+            "String",
+            "APP_ANON_KEY",
+            "\"${escapeBuildConfigString(localSecretValue("APP_ANON_KEY").ifBlank { localSecretValue("SUPABASE_ANON_KEY") })}\""
+        )
 
 
         // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
@@ -396,6 +401,7 @@ secrets {
 
     // Ignore missing keys to allow builds without secrets file
     ignoreList.add("sdk.*")
+    ignoreList.add("APP_ANON_KEY")
 }
 
 fun localSecretValue(name: String): String {
@@ -410,22 +416,20 @@ fun localSecretValue(name: String): String {
     return ""
 }
 
-val validateReleaseSupabaseSecrets = tasks.register("validateReleaseSupabaseSecrets") {
+fun escapeBuildConfigString(value: String): String =
+    value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+
+val validateReleaseCloudSecrets = tasks.register("validateReleaseCloudSecrets") {
     doLast {
-        val supabaseUrl = localSecretValue("SUPABASE_URL")
-        val supabaseAnonKey = localSecretValue("SUPABASE_ANON_KEY")
+        val appAnonKey = localSecretValue("APP_ANON_KEY").ifBlank { localSecretValue("SUPABASE_ANON_KEY") }
         require(
-            supabaseUrl.startsWith("https://") &&
-                supabaseUrl.endsWith(".supabase.co") &&
-                !supabaseUrl.contains("your-project", ignoreCase = true)
+            appAnonKey.length > 40 &&
+                !appAnonKey.equals("your-supabase-anon-key", ignoreCase = true) &&
+                !appAnonKey.startsWith("your-", ignoreCase = true)
         ) {
-            "Release builds require a real SUPABASE_URL in secrets.properties, Gradle properties, or the environment."
-        }
-        require(
-            supabaseAnonKey.length > 40 &&
-                !supabaseAnonKey.equals("your-supabase-anon-key", ignoreCase = true)
-        ) {
-            "Release builds require a real SUPABASE_ANON_KEY in secrets.properties, Gradle properties, or the environment."
+            "Release builds require a real APP_ANON_KEY in secrets.properties, Gradle properties, or the environment."
         }
     }
 }
@@ -438,7 +442,7 @@ tasks.configureEach {
             "preSideloadStagingBuild"
         )
     ) {
-        dependsOn(validateReleaseSupabaseSecrets)
+        dependsOn(validateReleaseCloudSecrets)
     }
 }
 

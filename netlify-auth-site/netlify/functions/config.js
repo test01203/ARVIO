@@ -20,7 +20,7 @@ exports.handler = async (event) => {
       tmdb: true,
       trakt: true
     },
-    supabaseFallback: true,
+    supabaseFallback: false,
     mediaProxy: false,
     timestamp: new Date().toISOString()
   });
