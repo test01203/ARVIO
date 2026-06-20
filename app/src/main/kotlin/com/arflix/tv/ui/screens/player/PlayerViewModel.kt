@@ -184,6 +184,7 @@ class PlayerViewModel @Inject constructor(
     private var aiApiKey = ""
     private var aiModel = SubtitleAiModel.GROQ_LLAMA_70B
     private var aiRemoveHearingImpaired = true
+    private var speechTranscriptionEnabled = false
 
     // Global AI subtitle DataStore keys (device-wide, not profile-scoped)
     private val aiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
@@ -191,6 +192,7 @@ class PlayerViewModel @Inject constructor(
     private val aiApiKeyKey = globalStringPreferencesKey("subtitle_ai_api_key")
     private val aiModelKey = globalStringPreferencesKey("subtitle_ai_model")
     private val aiRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
+    private val speechTranscriptionEnabledKey = booleanPreferencesKey("speech_transcription_enabled")
 
     private val _isTranslatingLive = MutableStateFlow(false)
     val isTranslatingLive: kotlinx.coroutines.flow.StateFlow<Boolean> = _isTranslatingLive.asStateFlow()
@@ -221,6 +223,26 @@ class PlayerViewModel @Inject constructor(
                 }
                 _uiState.value = _uiState.value.copy(aiErrorToast = msg)
             }
+        }
+    }
+
+    // ── Speech-to-subtitle engine ─────────────────────────────────────────────
+    private var _speechEngine: SpeechSubtitleEngine? = null
+    val speechSubtitle: kotlinx.coroutines.flow.StateFlow<String?> get() =
+        _speechEngine?.subtitle ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+
+    private fun startSpeechEngine(url: String) {
+        _speechEngine?.stop()
+        _speechEngine = SpeechSubtitleEngine(player, aiApiKey, viewModelScope)
+        _speechEngine!!.start(url)
+    }
+
+    fun toggleSpeechSubtitle() {
+        val engine = _speechEngine
+        if (engine == null || !engine.subtitle.value.let { true }) {
+            _uiState.value.selectedStreamUrl?.let { startSpeechEngine(it) }
+        } else {
+            engine.stop(); _speechEngine = null
         }
     }
 
@@ -397,6 +419,8 @@ class PlayerViewModel @Inject constructor(
                 SubtitleAiModel.valueOf(prefs[aiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
             }.getOrDefault(SubtitleAiModel.GROQ_LLAMA_70B)
             aiRemoveHearingImpaired = prefs[aiRemoveHearingImpairedKey] ?: true
+            speechTranscriptionEnabled = prefs[speechTranscriptionEnabledKey] ?: false
+            _speechEngine?.stop(); _speechEngine = null
             translationManager.updateService(apiKey = aiApiKey, model = aiModel)
             translationManager.removeHearingImpaired = aiRemoveHearingImpaired
             translationManager.isEnabled = false
@@ -2045,6 +2069,11 @@ class PlayerViewModel @Inject constructor(
                 error = null,
                 isSetupError = false
             )
+
+            // Start speech transcription if enabled in settings
+            if (speechTranscriptionEnabled && aiApiKey.isNotBlank()) {
+                startSpeechEngine(url)
+            }
 
             // Re-run subtitle selection now that streamSrc is known — scores are now meaningful
             scheduleSubtitleSelection(currentOriginalLanguage)

@@ -2684,6 +2684,38 @@ fun PlayerScreen(
             )
         }
 
+        // ── Speech subtitle overlay ───────────────────────────────────────────
+        val speechSubtitleText by viewModel.speechSubtitle.collectAsStateWithLifecycle()
+        if (hasPlaybackStarted && speechSubtitleText != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 60.dp, start = 48.dp, end = 48.dp)
+                    .zIndex(6f)
+            ) {
+                Text(
+                    text = speechSubtitleText!!,
+                    color = Color.White,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        shadow = androidx.compose.ui.graphics.Shadow(
+                            color = Color.Black,
+                            offset = Offset(2f, 2f),
+                            blurRadius = 8f
+                        )
+                    ),
+                    modifier = Modifier
+                        .background(
+                            Color.Black.copy(alpha = 0.7f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 24.dp, vertical = 10.dp)
+                )
+            }
+        }
+
         // AI Translating badge — shown in top-right while subtitle translation is in progress
         val isTranslatingLive by viewModel.isTranslatingLive.collectAsStateWithLifecycle()
         AnimatedVisibility(
@@ -3206,6 +3238,7 @@ fun PlayerScreen(
                 isAiTranslating = uiState.isAiTranslating,
                 isAiAvailable = uiState.isAiAvailable,
                 aiTargetLanguageName = uiState.aiTargetLanguageName,
+                isSpeechActive = viewModel.speechSubtitle.collectAsStateWithLifecycle().value != null,
                 audioTracks = audioTracks,
                 selectedAudioIndex = selectedAudioIndex,
                 activeTab = subtitleMenuTab,
@@ -3245,6 +3278,7 @@ fun PlayerScreen(
                     }
                 },
                 onToggleAi = { viewModel.activateAiSubtitle() },
+                onToggleSpeech = { viewModel.toggleSpeechSubtitle() },
                 onClose = {
                     showSubtitleMenu = false
                     showControls = true
@@ -4041,6 +4075,7 @@ private fun SubtitleMenu(
     isAiTranslating: Boolean = false,
     isAiAvailable: Boolean = false,
     aiTargetLanguageName: String = "",
+    isSpeechActive: Boolean = false,
     audioTracks: List<AudioTrackInfo>,
     selectedAudioIndex: Int,
     activeTab: Int,
@@ -4054,6 +4089,7 @@ private fun SubtitleMenu(
     onSelectSubtitle: (Int) -> Unit,
     onSelectAudio: (AudioTrackInfo) -> Unit,
     onToggleAi: () -> Unit = {},
+    onToggleSpeech: () -> Unit = {},
     onClose: () -> Unit
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -4139,11 +4175,20 @@ private fun SubtitleMenu(
                             ) {
                                 item {
                                     LangPanelItem(
+                                        name = "🎙 Voice (HE)",
+                                        count = 0,
+                                        isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == -1,
+                                        isActivePanel = isSpeechActive,
+                                        isSelected = isSpeechActive
+                                    )
+                                }
+                                item {
+                                    LangPanelItem(
                                         name = "Off",
                                         count = 0,
                                         isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == 0,
                                         isActivePanel = subtitleLangIndex == 0,
-                                        isSelected = selectedSubtitle == null
+                                        isSelected = selectedSubtitle == null && !isSpeechActive
                                     )
                                 }
                                 itemsIndexed(subtitleGroups) { idx, (langName, items) ->

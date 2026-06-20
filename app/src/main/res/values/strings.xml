@@ -229,6 +229,9 @@
 
     <!-- AI Subtitles -->
     <string name="ai_subtitles_section">AI Subtitles</string>
+    <string name="speech_transcription_title">Voice Transcription + Translation</string>
+    <string name="speech_transcription_desc">Listen to the audio track and generate Hebrew subtitles — no subtitle file needed. Uses Groq Whisper.</string>
+    <string name="speech_transcription_player_label">Voice (Hebrew)</string>
     <string name="ai_subtitle_translation_title">AI Subtitle Translation</string>
     <string name="ai_subtitle_translation_desc">Translate subtitles in real time using Groq or Gemini</string>
     <string name="ai_model_title">AI Model</string>

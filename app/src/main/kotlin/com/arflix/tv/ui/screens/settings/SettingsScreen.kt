@@ -1321,6 +1321,8 @@ fun SettingsScreen(
                             subtitleAiApiKey = uiState.subtitleAiApiKey,
                             subtitleAiModel = uiState.subtitleAiModel,
                             subtitleRemoveHearingImpaired = uiState.subtitleRemoveHearingImpaired,
+                            speechTranscriptionEnabled = uiState.speechTranscriptionEnabled,
+                            onSpeechTranscriptionToggle = { viewModel.setSpeechTranscriptionEnabled(it) },
                             onSubtitleAiEnabledToggle = { viewModel.setSubtitleAiEnabled(it) },
                             onSubtitleAiModelClick = { showAiModelDialog = true },
                             onSubtitleAiAutoSelectToggle = { viewModel.setSubtitleAiAutoSelect(it) },
@@ -3643,6 +3645,14 @@ private fun MobileSettingsSubPage(
                 }
                 MobileSettingsCategory(title = stringResource(R.string.ai_subtitles_section)) {
                     MobileSettingsRow(
+                        icon = Icons.Default.Mic,
+                        title = stringResource(R.string.speech_transcription_title),
+                        subtitle = stringResource(R.string.speech_transcription_desc),
+                        value = if (uiState.speechTranscriptionEnabled) "On" else "Off",
+                        isFocused = false,
+                        onClick = { viewModel.setSpeechTranscriptionEnabled(!uiState.speechTranscriptionEnabled) }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.AutoAwesome,
                         title = stringResource(R.string.ai_subtitle_translation_title),
                         subtitle = stringResource(R.string.ai_subtitle_translation_desc),
@@ -4772,6 +4782,7 @@ private fun TvGeneralSettingsRows(
                     modifier = Modifier.settingsFocusSlot(localIndex)
                 )
                 28 -> SettingsToggleRow(stringResource(R.string.ai_subtitle_translation_title), stringResource(R.string.ai_subtitle_translation_desc), subtitleAiEnabled, focusedIndex == localIndex, onSubtitleAiEnabledToggle, Modifier.settingsFocusSlot(localIndex))
+                38 -> SettingsToggleRow(stringResource(R.string.speech_transcription_title), stringResource(R.string.speech_transcription_desc), speechTranscriptionEnabled, focusedIndex == localIndex, onSpeechTranscriptionToggle, Modifier.settingsFocusSlot(localIndex))
                 29 -> SettingsRow(
                     icon = Icons.Default.AutoAwesome,
                     title = stringResource(R.string.ai_model_title),
@@ -5285,6 +5296,15 @@ private fun GeneralSettings(
                 modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 8.dp)
             )
         }
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.speech_transcription_title),
+            subtitle = stringResource(R.string.speech_transcription_desc),
+            isEnabled = speechTranscriptionEnabled,
+            isFocused = focusedIndex == 38,
+            onToggle = onSpeechTranscriptionToggle,
+            modifier = Modifier.settingsFocusSlot(38)
+        )
     }
 }
 

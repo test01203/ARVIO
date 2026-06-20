@@ -199,6 +199,7 @@ data class SettingsUiState(
     val subtitleAiApiKey: String = "",
     val subtitleAiModel: SubtitleAiModel = SubtitleAiModel.GROQ_LLAMA_70B,
     val subtitleRemoveHearingImpaired: Boolean = true,
+    val speechTranscriptionEnabled: Boolean = false,
     val aiKeyServerState: AiKeyServerState = AiKeyServerState(),
     val smoothScrolling: Boolean = true
 )
@@ -285,6 +286,7 @@ class SettingsViewModel @Inject constructor(
     // Global (non-profile-scoped) AI subtitle settings â€” device-wide, not per-profile
     private val subtitleAiEnabledKey = booleanPreferencesKey("subtitle_ai_enabled")
     private val subtitleAiAutoSelectKey = booleanPreferencesKey("subtitle_ai_auto_select")
+    private val speechTranscriptionEnabledKey = booleanPreferencesKey("speech_transcription_enabled")
     private val subtitleAiApiKeyKey = stringPreferencesKey("subtitle_ai_api_key")
     private val subtitleAiModelKey = stringPreferencesKey("subtitle_ai_model")
     private val subtitleRemoveHearingImpairedKey = booleanPreferencesKey("subtitle_remove_hearing_impaired")
@@ -492,6 +494,7 @@ class SettingsViewModel @Inject constructor(
                 SubtitleAiModel.valueOf(prefs[subtitleAiModelKey] ?: SubtitleAiModel.GROQ_LLAMA_70B.name)
             }.getOrDefault(SubtitleAiModel.GROQ_LLAMA_70B)
             val subtitleRemoveHearingImpaired = prefs[subtitleRemoveHearingImpairedKey] ?: true
+            val speechTranscriptionEnabled = prefs[speechTranscriptionEnabledKey] ?: false
 
             // Check auth statuses
             val authState = authRepository.authState.first()
@@ -559,6 +562,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiApiKey = subtitleAiApiKey,
                 subtitleAiModel = subtitleAiModel,
                 subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
+                speechTranscriptionEnabled = speechTranscriptionEnabled,
                 smoothScrolling = smoothScrolling
             )
         }
@@ -1253,6 +1257,13 @@ class SettingsViewModel @Inject constructor(
     }
 
     // -- AI Subtitles ---------------------------------------------------------
+
+    fun setSpeechTranscriptionEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[speechTranscriptionEnabledKey] = enabled }
+            _uiState.value = _uiState.value.copy(speechTranscriptionEnabled = enabled)
+        }
+    }
 
     fun setSubtitleAiEnabled(enabled: Boolean) {
         viewModelScope.launch {
