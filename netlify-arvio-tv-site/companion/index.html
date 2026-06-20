@@ -4,42 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ARVIO Companion</title>
-  <meta name="description" content="Manage your ARVIO account — profiles, add-ons, history, AI subtitles">
+  <meta name="description" content="Manage your ARVIO account — profiles, add-ons, AI subtitles">
   <link rel="icon" href="../assets/arvio-icon-512.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+  <!-- Background effects (same as arvio.tv) -->
+  <div class="bg-fx"></div>
+  <div class="bg-mesh"></div>
+  <div class="bg-grain"></div>
 
   <!-- Auth Screen -->
   <div id="auth-screen" style="display:none">
     <img src="../assets/arvio-icon-512.png" class="auth-logo" onerror="this.style.display='none'" alt="ARVIO">
     <div class="auth-title">ARVIO Companion</div>
     <div class="auth-sub">Manage your ARVIO account — profiles, add-ons &amp; AI subtitles</div>
-
-    <div style="width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px">
-      <input id="auth-email" type="email" placeholder="Email" autocomplete="email"
-        style="width:100%;padding:14px 16px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#fff;font-size:15px;box-sizing:border-box;outline:none"
-        onfocus="this.style.borderColor='#F5C442'" onblur="this.style.borderColor='#333'"
+    <div class="auth-form">
+      <input id="auth-email" type="email" class="auth-input" placeholder="Email" autocomplete="email"
         onkeydown="if(event.key==='Enter')document.getElementById('auth-password').focus()">
-
-      <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password"
-        style="width:100%;padding:14px 16px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#fff;font-size:15px;box-sizing:border-box;outline:none"
-        onfocus="this.style.borderColor='#F5C442'" onblur="this.style.borderColor='#333'"
+      <input id="auth-password" type="password" class="auth-input" placeholder="Password" autocomplete="current-password"
         onkeydown="if(event.key==='Enter')signIn()">
-
-      <button id="auth-btn-signin" onclick="signIn()"
-        style="width:100%;padding:14px;background:#F5C442;color:#000;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">
-        Sign In
-      </button>
-
-      <button id="auth-btn-signup" onclick="signUp()"
-        style="width:100%;padding:14px;background:transparent;color:#aaa;border:1px solid #333;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
-        Create Account
-      </button>
-
-      <div id="auth-status" style="font-size:13px;text-align:center;color:#aaa;min-height:18px"></div>
+      <button id="auth-btn-signin" class="btn-primary" onclick="signIn()">Sign In</button>
+      <button id="auth-btn-signup" class="btn-secondary" onclick="signUp()">Create Account</button>
+      <div id="auth-status" style="font-size:13px;text-align:center;min-height:18px"></div>
     </div>
   </div>
 
