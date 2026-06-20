@@ -1697,6 +1697,7 @@ fun PlayerScreen(
             if (isCasting) { delay(500); continue }
             currentPosition = runCatching { exoPlayer.currentPosition }.getOrDefault(currentPosition)
             viewModel.onPlaybackPosition(currentPosition)
+            viewModel._speechPositionMs.value = currentPosition
             val rawDuration = exoPlayer.duration
             duration = if (rawDuration > 0L && rawDuration != C.TIME_UNSET) rawDuration else 0L
             progress = if (duration > 0L) {
@@ -2698,8 +2699,8 @@ fun PlayerScreen(
                     color = Color.White,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyLarge.copy(
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = androidx.compose.ui.text.TextStyle(
                         shadow = androidx.compose.ui.graphics.Shadow(
                             color = Color.Black,
                             offset = Offset(2f, 2f),

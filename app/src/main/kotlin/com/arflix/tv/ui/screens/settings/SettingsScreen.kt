@@ -3645,7 +3645,7 @@ private fun MobileSettingsSubPage(
                 }
                 MobileSettingsCategory(title = stringResource(R.string.ai_subtitles_section)) {
                     MobileSettingsRow(
-                        icon = Icons.Default.Mic,
+                        icon = Icons.Default.AutoAwesome,
                         title = stringResource(R.string.speech_transcription_title),
                         subtitle = stringResource(R.string.speech_transcription_desc),
                         value = if (uiState.speechTranscriptionEnabled) "On" else "Off",
@@ -4686,6 +4686,8 @@ private fun TvGeneralSettingsRows(
     subtitleAiApiKey: String = "",
     subtitleAiModel: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B,
     subtitleRemoveHearingImpaired: Boolean = true,
+    speechTranscriptionEnabled: Boolean = false,
+    onSpeechTranscriptionToggle: (Boolean) -> Unit = {},
     onSubtitleAiEnabledToggle: (Boolean) -> Unit = {},
     onSubtitleAiModelClick: () -> Unit = {},
     onSubtitleAiAutoSelectToggle: (Boolean) -> Unit = {},
@@ -4872,6 +4874,8 @@ private fun GeneralSettings(
     subtitleAiApiKey: String = "",
     subtitleAiModel: com.arflix.tv.ui.screens.player.SubtitleAiModel = com.arflix.tv.ui.screens.player.SubtitleAiModel.GROQ_LLAMA_70B,
     subtitleRemoveHearingImpaired: Boolean = true,
+    speechTranscriptionEnabled: Boolean = false,
+    onSpeechTranscriptionToggle: (Boolean) -> Unit = {},
     onSubtitleAiEnabledToggle: (Boolean) -> Unit = {},
     onSubtitleAiModelClick: () -> Unit = {},
     onSubtitleAiAutoSelectToggle: (Boolean) -> Unit = {},

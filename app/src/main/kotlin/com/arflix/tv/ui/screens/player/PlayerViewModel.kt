@@ -227,22 +227,25 @@ class PlayerViewModel @Inject constructor(
     }
 
     // ── Speech-to-subtitle engine ─────────────────────────────────────────────
+    // Position is fed from PlayerScreen via onPlaybackPosition()
+    internal val _speechPositionMs = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private var _speechEngine: SpeechSubtitleEngine? = null
-    val speechSubtitle: kotlinx.coroutines.flow.StateFlow<String?> get() =
-        _speechEngine?.subtitle ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+    private val _speechSubtitle = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val speechSubtitle: kotlinx.coroutines.flow.StateFlow<String?> = _speechSubtitle
 
     private fun startSpeechEngine(url: String) {
         _speechEngine?.stop()
-        _speechEngine = SpeechSubtitleEngine(player, aiApiKey, viewModelScope)
+        _speechEngine = SpeechSubtitleEngine(_speechPositionMs, aiApiKey, viewModelScope).also {
+            viewModelScope.launch { it.subtitle.collect { text -> _speechSubtitle.value = text } }
+        }
         _speechEngine!!.start(url)
     }
 
     fun toggleSpeechSubtitle() {
-        val engine = _speechEngine
-        if (engine == null || !engine.subtitle.value.let { true }) {
+        if (_speechEngine == null) {
             _uiState.value.selectedStreamUrl?.let { startSpeechEngine(it) }
         } else {
-            engine.stop(); _speechEngine = null
+            _speechEngine?.stop(); _speechEngine = null; _speechSubtitle.value = null
         }
     }
 

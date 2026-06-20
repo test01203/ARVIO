@@ -4,12 +4,12 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
-import androidx.media3.common.Player
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -32,7 +32,7 @@ private const val TAG = "SpeechSubtitle"
  * Result: zero perceived delay — subtitle is ready BEFORE the audio plays.
  */
 class SpeechSubtitleEngine(
-    private val player: Player,
+    private val positionMs: StateFlow<Long>,   // updated by PlayerScreen each frame
     private val apiKey: String,
     private val scope: CoroutineScope
 ) {
@@ -122,9 +122,9 @@ class SpeechSubtitleEngine(
             audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
 
         try {
-            while (isActive) {
+            while (currentCoroutineContext().isActive) {
                 // Wait until we need to prefetch
-                val playerPosMs = withContext(Dispatchers.Main) { player.currentPosition }
+                val playerPosMs = positionMs.value
                 val targetMs    = playerPosMs + PREFETCH_SEC * 1000
 
                 // Check what we've already transcribed
@@ -402,8 +402,8 @@ class SpeechSubtitleEngine(
 
     private suspend fun runDisplayLoop() {
         var lastText: String? = null
-        while (isActive) {
-            val posMs = withContext(Dispatchers.Main) { player.currentPosition }
+        while (currentCoroutineContext().isActive) {
+            val posMs = positionMs.value
 
             val entry = synchronized(subtitleMap) {
                 subtitleMap.floorEntry(posMs)
