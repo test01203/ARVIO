@@ -16,17 +16,30 @@
   <div id="auth-screen" style="display:none">
     <img src="../assets/arvio-icon-512.png" class="auth-logo" onerror="this.style.display='none'" alt="ARVIO">
     <div class="auth-title">ARVIO Companion</div>
-    <div class="auth-sub">Manage your ARVIO account — profiles, add-ons, history &amp; AI subtitles</div>
-    <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:12px">
-      <input id="auth-email-input" type="email" placeholder="your@email.com"
-        style="width:100%;padding:14px 16px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#fff;font-size:16px;box-sizing:border-box;outline:none"
+    <div class="auth-sub">Manage your ARVIO account — profiles, add-ons &amp; AI subtitles</div>
+
+    <div style="width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px">
+      <input id="auth-email" type="email" placeholder="Email" autocomplete="email"
+        style="width:100%;padding:14px 16px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#fff;font-size:15px;box-sizing:border-box;outline:none"
         onfocus="this.style.borderColor='#F5C442'" onblur="this.style.borderColor='#333'"
-        onkeydown="if(event.key==='Enter')sendMagicLink()">
-      <button onclick="sendMagicLink()"
-        style="width:100%;padding:14px;background:#F5C442;color:#000;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer">
-        ✉️ Send Magic Link
+        onkeydown="if(event.key==='Enter')document.getElementById('auth-password').focus()">
+
+      <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password"
+        style="width:100%;padding:14px 16px;border:1px solid #333;border-radius:10px;background:#1a1a1a;color:#fff;font-size:15px;box-sizing:border-box;outline:none"
+        onfocus="this.style.borderColor='#F5C442'" onblur="this.style.borderColor='#333'"
+        onkeydown="if(event.key==='Enter')signIn()">
+
+      <button id="auth-btn-signin" onclick="signIn()"
+        style="width:100%;padding:14px;background:#F5C442;color:#000;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">
+        Sign In
       </button>
-      <div id="auth-status" style="font-size:14px;text-align:center;color:#aaa;min-height:20px"></div>
+
+      <button id="auth-btn-signup" onclick="signUp()"
+        style="width:100%;padding:14px;background:transparent;color:#aaa;border:1px solid #333;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
+        Create Account
+      </button>
+
+      <div id="auth-status" style="font-size:13px;text-align:center;color:#aaa;min-height:18px"></div>
     </div>
   </div>
 
@@ -36,8 +49,6 @@
   <!-- Toast -->
   <div id="toast"></div>
 
-  <!-- Supabase CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
