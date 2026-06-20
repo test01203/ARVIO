@@ -224,6 +224,24 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    // ── Speech-to-subtitle engine (audio → Hebrew, zero delay) ───────────────
+    val speechSubtitleEngine: SpeechSubtitleEngine by lazy {
+        SpeechSubtitleEngine(
+            player = player,
+            apiKey = aiApiKey,
+            scope = viewModelScope
+        )
+    }
+
+    fun startSpeechSubtitles() {
+        val url = _uiState.value.selectedStreamUrl ?: return
+        speechSubtitleEngine.start(url)
+    }
+
+    fun stopSpeechSubtitles() {
+        speechSubtitleEngine.stop()
+    }
+
     // Skip intro
     private var skipIntervals: List<SkipInterval> = emptyList()
     private var lastActiveSkipType: String? = null
@@ -401,6 +419,8 @@ class PlayerViewModel @Inject constructor(
             translationManager.removeHearingImpaired = aiRemoveHearingImpaired
             translationManager.isEnabled = false
             translationManager.reset()
+            // Stop any previous speech subtitle session
+            speechSubtitleEngine.stop()
 
             _uiState.value = PlayerUiState(
                 isLoading = true,
@@ -2030,6 +2050,11 @@ class PlayerViewModel @Inject constructor(
                 if (newSubs.isNotEmpty()) {
                     _uiState.value = _uiState.value.copy(subtitles = existingSubs + newSubs)
                 }
+            }
+
+            // Start speech subtitle pre-fetch if AI is enabled and no subtitle track available
+            if (aiSubtitleEnabled && aiApiKey.isNotBlank()) {
+                speechSubtitleEngine.start(url)
             }
 
             // Direct URL - use immediately (ExoPlayer handles redirects)

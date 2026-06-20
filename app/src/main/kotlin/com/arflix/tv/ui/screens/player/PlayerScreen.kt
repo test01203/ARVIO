@@ -2684,6 +2684,38 @@ fun PlayerScreen(
             )
         }
 
+        // ── Speech-to-subtitle overlay (audio → Hebrew, pre-fetched, zero delay) ──
+        val speechSubtitle by viewModel.speechSubtitleEngine.subtitle.collectAsStateWithLifecycle()
+        speechSubtitle?.let { hebrewText ->
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 56.dp, start = 40.dp, end = 40.dp)
+                    .zIndex(6f)
+            ) {
+                androidx.compose.material3.Text(
+                    text = hebrewText,
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 26.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = androidx.compose.material3.LocalTextStyle.current.copy(
+                        shadow = androidx.compose.ui.graphics.Shadow(
+                            color = androidx.compose.ui.graphics.Color.Black,
+                            offset = androidx.compose.ui.geometry.Offset(2f, 2f),
+                            blurRadius = 6f
+                        )
+                    ),
+                    modifier = Modifier
+                        .background(
+                            androidx.compose.ui.graphics.Color(0xBB000000),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+            }
+        }
+
         // AI Translating badge — shown in top-right while subtitle translation is in progress
         val isTranslatingLive by viewModel.isTranslatingLive.collectAsStateWithLifecycle()
         AnimatedVisibility(
