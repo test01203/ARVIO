@@ -117,7 +117,7 @@ fun PlaybackQualityBadgeRow(
     modifier: Modifier = Modifier
 ) {
     if (stream == null) return
-    val badges = remember(stream.quality, stream.source, stream.description) {
+    val badges = remember(stream) {
         buildPlaybackBadges(stream)
     }
     if (badges.isEmpty()) return
