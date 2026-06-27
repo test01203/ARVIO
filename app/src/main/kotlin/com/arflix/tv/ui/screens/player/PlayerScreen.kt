@@ -435,6 +435,19 @@ fun PlayerScreen(
 
     // Error modal focus
     var errorModalFocusIndex by remember { mutableIntStateOf(0) }
+    var errorModalFocusIndex by remember { mutableIntStateOf(0) }
+
+    // Auto-skip failed source: countdown (-1 = inactive)
+    var autoSkipCountdown by remember { mutableIntStateOf(-1) }
+    var autoSkipEnabled by remember { mutableStateOf(true) }
+    LaunchedEffect(context) {
+        runCatching {
+            val prefs = context.settingsDataStore.data.first()
+            autoSkipEnabled = prefs.asMap().entries
+                .firstOrNull { (key, _) -> key.name.endsWith("_auto_skip_failed_source") }
+                ?.value as? Boolean ?: true
+        }
+    }
 
     // Buffering watchdog - detect stuck buffering
     var bufferingStartTime by remember { mutableStateOf<Long?>(null) }
@@ -1956,6 +1969,24 @@ fun PlayerScreen(
             showSubtitleMenu = false
         }
     }
+
+    // Auto-skip countdown: when error appears and there are more streams, start a 5-second timer
+    LaunchedEffect(uiState.error, autoSkipEnabled) {
+        if (uiState.error != null && autoSkipEnabled && uiState.streams.size > 1 && !uiState.isSetupError) {
+            autoSkipCountdown = 5
+            while (autoSkipCountdown > 0) {
+                delay(1_000L)
+                autoSkipCountdown--
+            }
+            if (uiState.error != null) {
+                val advanced = tryAdvanceToNextStream(recordCurrentFailure = false)
+                if (!advanced) autoSkipCountdown = -1
+            }
+        } else {
+            autoSkipCountdown = -1
+        }
+    }
+
 
     // Request focus on the container when not showing controls
     LaunchedEffect(showControls, showSubtitleMenu, showSourceMenu, showNextEpisodePrompt, uiState.error) {
@@ -3503,6 +3534,16 @@ fun PlayerScreen(
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
                         )
+                    // Auto-skip countdown indicator
+                    if (autoSkipCountdown > 0 && uiState.streams.size > 1 && !isSetup) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Skipping to next source in $autoSkipCountdown…",
+                            style = ArflixTypography.caption,
+                            color = TextSecondary.copy(alpha = 0.85f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(32.dp))
@@ -3515,6 +3556,15 @@ fun PlayerScreen(
                                 isFocused = errorModalFocusIndex == 0,
                                 isPrimary = true,
                                 onClick = { viewModel.retry() }
+                            )
+                        }
+                        if (autoSkipCountdown > 0 && uiState.streams.size > 1 && !isSetup) {
+                            ErrorButton(
+                                text = "CANCEL SKIP",
+                                icon = Icons.Default.Close,
+                                isFocused = errorModalFocusIndex == 2,
+                                isPrimary = false,
+                                onClick = { autoSkipCountdown = -1 }
                             )
                         }
                         ErrorButton(
