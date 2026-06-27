@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 
 import com.arflix.tv.core.plugin.PluginManager
+import com.arflix.tv.domain.model.MetaRepoEntry
 
 
 
@@ -101,6 +102,9 @@ class PluginViewModel @Inject constructor(
             PluginUiEvent.RejectPendingRepoChange -> rejectPendingRepoChange()
             PluginUiEvent.ConfirmPendingScraperEnable -> confirmPendingScraperEnable()
             PluginUiEvent.DismissPendingScraperEnable -> dismissPendingScraperEnable()
+            is PluginUiEvent.BrowseMetaRepo -> browseMetaRepo(event.url)
+            is PluginUiEvent.InstallMetaRepoEntry -> installMetaRepoEntry(event.entry)
+            PluginUiEvent.DismissMetaRepoBrowser -> _uiState.update { it.copy(metaRepoBrowseResult = null) }
         }
     }
 
@@ -269,6 +273,60 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun normalizeUrlForComparison(url: String): String {
+    private fun browseMetaRepo(url: String) {
+        if (url.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAddingRepo = true, errorMessage = null) }
+            val entries = pluginManager.browseMetaRepo(url)
+            if (entries == null) {
+                // Not a meta-repo — fall back to normal addRepository
+                addRepository(url)
+            } else {
+                // It IS a meta-repo: show the browser dialog
+                val alreadyInstalledUrls = _uiState.value.repositories.map { it.url }.toSet()
+                _uiState.update {
+                    it.copy(
+                        isAddingRepo = false,
+                        metaRepoBrowseResult = MetaRepoBrowseResult(
+                            metaRepoUrl = url,
+                            metaRepoName = entries.firstOrNull()?.let {
+                                url.substringAfter("://").substringBefore("/")
+                            } ?: url,
+                            entries = entries,
+                            installed = alreadyInstalledUrls.intersect(entries.map { e -> e.pluginsUrl }.toSet())
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun installMetaRepoEntry(entry: MetaRepoEntry) {
+        viewModelScope.launch {
+            _uiState.update { state ->
+                state.copy(
+                    metaRepoBrowseResult = state.metaRepoBrowseResult?.copy(
+                        installing = state.metaRepoBrowseResult.installing + entry.pluginsUrl
+                    )
+                )
+            }
+            val result = pluginManager.addSubRepository(entry)
+            _uiState.update { state ->
+                val browse = state.metaRepoBrowseResult ?: return@update state
+                state.copy(
+                    metaRepoBrowseResult = browse.copy(
+                        installing = browse.installing - entry.pluginsUrl,
+                        installed = if (result.isSuccess) browse.installed + entry.pluginsUrl
+                                    else browse.installed
+                    ),
+                    errorMessage = result.exceptionOrNull()?.message?.let {
+                        "Failed to install ${entry.name}: $it"
+                    }
+                )
+            }
+        }
+    }
+
         return url.trim().trimEnd('/').lowercase()
     }
 
