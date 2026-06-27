@@ -273,25 +273,24 @@ class PluginViewModel @Inject constructor(
     }
 
     private fun normalizeUrlForComparison(url: String): String {
+        return url.trim().trimEnd('/').lowercase()
+    }
+
     private fun browseMetaRepo(url: String) {
         if (url.isBlank()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isAddingRepo = true, errorMessage = null) }
             val entries = pluginManager.browseMetaRepo(url)
             if (entries == null) {
-                // Not a meta-repo — fall back to normal addRepository
                 addRepository(url)
             } else {
-                // It IS a meta-repo: show the browser dialog
                 val alreadyInstalledUrls = _uiState.value.repositories.map { it.url }.toSet()
                 _uiState.update {
                     it.copy(
                         isAddingRepo = false,
                         metaRepoBrowseResult = MetaRepoBrowseResult(
                             metaRepoUrl = url,
-                            metaRepoName = entries.firstOrNull()?.let {
-                                url.substringAfter("://").substringBefore("/")
-                            } ?: url,
+                            metaRepoName = url.substringAfter("://").substringBefore("/"),
                             entries = entries,
                             installed = alreadyInstalledUrls.intersect(entries.map { e -> e.pluginsUrl }.toSet())
                         )
@@ -327,11 +326,8 @@ class PluginViewModel @Inject constructor(
         }
     }
 
-        return url.trim().trimEnd('/').lowercase()
-    }
-
     private fun startQrMode() {}
-        fun stopQrMode() {}
+    fun stopQrMode() {}
     private fun confirmPendingRepoChange() {}
     private fun rejectPendingRepoChange() {}
     override fun onCleared() {
