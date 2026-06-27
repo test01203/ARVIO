@@ -3517,7 +3517,7 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.setAutoPlaySingleSource(!uiState.autoPlaySingleSource) }
                     )
                     MobileSettingsRow(
-                        icon = Icons.Default.SkipNext,
+                        icon = Icons.Default.Schedule,
                         title = "Auto-skip failed sources",
                         value = if (uiState.autoSkipFailedSource) "On" else "Off",
                         isFocused = false,
