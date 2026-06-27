@@ -1844,6 +1844,23 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun updateCatalogArtwork(
+        catalogId: String,
+        coverImageUrl: String?,
+        heroImageUrl: String?,
+        focusGifUrl: String?,
+        clearLogoUrl: String?
+    ) {
+        viewModelScope.launch {
+            val success = catalogRepository.updateCatalogArtwork(
+                catalogId, coverImageUrl, heroImageUrl, focusGifUrl, clearLogoUrl
+            )
+            if (success) {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
     fun moveCatalogUp(catalogId: String) {
         viewModelScope.launch {
             catalogRepository.moveCatalogUp(catalogId)

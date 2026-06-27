@@ -355,6 +355,11 @@ fun SettingsScreen(
     var iptvActionIndex by remember { mutableIntStateOf(0) }
     var showIptvCategoriesSettings by remember { mutableStateOf(false) }
     // Rename dialog state
+    // Artwork edit state
+    var editCatalogCoverUrl by remember { mutableStateOf("") }
+    var editCatalogHeroUrl by remember { mutableStateOf("") }
+    var editCatalogFocusGifUrl by remember { mutableStateOf("") }
+    var editCatalogClearLogoUrl by remember { mutableStateOf("") }
     var showCatalogRename by remember { mutableStateOf(false) }
     var renameCatalogId by remember { mutableStateOf("") }
     var renameCatalogTitle by remember { mutableStateOf("") }
@@ -1010,6 +1015,10 @@ fun SettingsScreen(
                                                         0 -> {
                                                             renameCatalogId = catalog.id
                                                             renameCatalogTitle = catalog.title
+                                                            editCatalogCoverUrl = catalog.collectionCoverImageUrl.orEmpty()
+                                                            editCatalogHeroUrl = catalog.collectionHeroImageUrl.orEmpty()
+                                                            editCatalogFocusGifUrl = catalog.collectionFocusGifUrl.orEmpty()
+                                                            editCatalogClearLogoUrl = catalog.collectionClearLogoUrl.orEmpty()
                                                             showCatalogRename = true
                                                         }
                                                         1 -> viewModel.moveCatalogUp(catalog.id)
@@ -1113,6 +1122,10 @@ fun SettingsScreen(
                 onRenameCatalogClick = { catalog ->
                     renameCatalogId = catalog.id
                     renameCatalogTitle = catalog.title
+                    editCatalogCoverUrl = catalog.collectionCoverImageUrl.orEmpty()
+                    editCatalogHeroUrl = catalog.collectionHeroImageUrl.orEmpty()
+                    editCatalogFocusGifUrl = catalog.collectionFocusGifUrl.orEmpty()
+                    editCatalogClearLogoUrl = catalog.collectionClearLogoUrl.orEmpty()
                     showCatalogRename = true
                 },
                 onConnectHomeServerClick = {
@@ -1507,6 +1520,10 @@ fun SettingsScreen(
                             onRenameCatalog = { catalog ->
                                 renameCatalogId = catalog.id
                                 renameCatalogTitle = catalog.title
+                                editCatalogCoverUrl = catalog.collectionCoverImageUrl.orEmpty()
+                                editCatalogHeroUrl = catalog.collectionHeroImageUrl.orEmpty()
+                                editCatalogFocusGifUrl = catalog.collectionFocusGifUrl.orEmpty()
+                                editCatalogClearLogoUrl = catalog.collectionClearLogoUrl.orEmpty()
                                 showCatalogRename = true
                             },
                             onMoveCatalogUp = { catalog -> viewModel.moveCatalogUp(catalog.id) },
@@ -1777,15 +1794,50 @@ fun SettingsScreen(
             InputModal(
                 title = stringResource(R.string.rename_catalog),
                 fields = listOf(
-                    InputField(label = "Title", value = renameCatalogTitle, onValueChange = { renameCatalogTitle = it })
+                    InputField(label = "Title", value = renameCatalogTitle, onValueChange = { renameCatalogTitle = it }),
+                    InputField(
+                        label = "Cover image URL",
+                        placeholder = "https://... direct image link",
+                        value = editCatalogCoverUrl,
+                        onValueChange = { editCatalogCoverUrl = it }
+                    ),
+                    InputField(
+                        label = "Hero image URL (optional)",
+                        placeholder = "Background shown when row is focused",
+                        value = editCatalogHeroUrl,
+                        onValueChange = { editCatalogHeroUrl = it }
+                    ),
+                    InputField(
+                        label = "Animated GIF URL (optional)",
+                        placeholder = "Replaces cover on focus",
+                        value = editCatalogFocusGifUrl,
+                        onValueChange = { editCatalogFocusGifUrl = it }
+                    ),
+                    InputField(
+                        label = "Clear logo URL (optional)",
+                        placeholder = "Transparent title logo",
+                        value = editCatalogClearLogoUrl,
+                        onValueChange = { editCatalogClearLogoUrl = it }
+                    )
                 ),
                 onConfirm = {
                     if (renameCatalogTitle.isNotBlank()) {
                         viewModel.renameCatalog(renameCatalogId, renameCatalogTitle)
+                        viewModel.updateCatalogArtwork(
+                            catalogId = renameCatalogId,
+                            coverImageUrl = editCatalogCoverUrl.takeIf { it.isNotBlank() },
+                            heroImageUrl = editCatalogHeroUrl.takeIf { it.isNotBlank() },
+                            focusGifUrl = editCatalogFocusGifUrl.takeIf { it.isNotBlank() },
+                            clearLogoUrl = editCatalogClearLogoUrl.takeIf { it.isNotBlank() }
+                        )
                         showCatalogRename = false
                     }
                 },
                 onDismiss = {
+                    editCatalogCoverUrl = ""
+                    editCatalogHeroUrl = ""
+                    editCatalogFocusGifUrl = ""
+                    editCatalogClearLogoUrl = ""
                     showCatalogRename = false
                 }
             )

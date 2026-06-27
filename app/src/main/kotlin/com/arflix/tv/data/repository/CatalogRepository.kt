@@ -793,6 +793,25 @@ class CatalogRepository @Inject constructor(
         return true
     }
 
+    suspend fun updateCatalogArtwork(
+        catalogId: String,
+        coverImageUrl: String?,
+        heroImageUrl: String?,
+        focusGifUrl: String?,
+        clearLogoUrl: String?
+    ): Boolean {
+        val current = getCatalogs().toMutableList()
+        val index = current.indexOfFirst { it.id == catalogId }
+        if (index < 0) return false
+        current[index] = current[index].copy(
+            collectionCoverImageUrl = coverImageUrl?.trim()?.takeIf { it.isNotBlank() },
+            collectionHeroImageUrl = heroImageUrl?.trim()?.takeIf { it.isNotBlank() },
+            collectionFocusGifUrl = focusGifUrl?.trim()?.takeIf { it.isNotBlank() },
+            collectionClearLogoUrl = clearLogoUrl?.trim()?.takeIf { it.isNotBlank() }
+        )
+        saveCatalogs(current)
+        return true
+    }
     suspend fun moveCatalogUp(catalogId: String): Boolean {
         val current = getCatalogs().toMutableList()
         val visible = current.filter { isVisibleCatalogInSettings(it) }
