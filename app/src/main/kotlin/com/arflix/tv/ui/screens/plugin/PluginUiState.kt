@@ -27,7 +27,7 @@ data class PluginUiState(
     // Pending change from phone
     val pendingRepoChange: PendingRepoChangeInfo? = null,
     // Pending scraper enable confirmation
-    val pendingScraperEnable: PendingScraperEnableInfo? = null
+    val pendingScraperEnable: PendingScraperEnableInfo? = null,
     // Meta-repo browser: non-null when user has added a meta-repo URL and we resolved its sub-repos
     val metaRepoBrowseResult: MetaRepoBrowseResult? = null
 )
