@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.sp
 import com.arflix.tv.ui.theme.TextPrimary
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -616,6 +617,11 @@ fun LiveTvScreen(
     val restrictedGroupSet = remember(lockedGroupSet, unlockedGroupKeys) {
         lockedGroupSet - unlockedGroupKeys
     }
+    val vodChannels by viewModel.vodChannels.collectAsState()
+    val pinnedCategoryRefs by viewModel.observePinnedIptvCategoryRefs().collectAsState(emptySet())
+    LaunchedEffect(Unit) {
+        viewModel.loadVodChannels(allowNetwork = false)
+    }
     LaunchedEffect(state.tvSession.recentChannelIds, state.tvSession.lastChannelId) {
         val persistedRecents = state.tvSession.recentChannelIds
             .ifEmpty { listOfNotNull(state.tvSession.lastChannelId.takeIf { it.isNotBlank() }) }
@@ -659,8 +665,10 @@ fun LiveTvScreen(
         // Ordered list, not favSet: the body sorts favourites by their stored rank, and a
         // Set key compares equal after a reorder so "move up/down" would never rebuild.
         favoriteOrderIds,
+        vodChannels,
     ) {
-        val snapshot = state.snapshot.channels
+        val liveSnapshot = state.snapshot.channels
+        val snapshot = if (vodChannels.isEmpty()) liveSnapshot else liveSnapshot + vodChannels
         var pagedTotal = withContext(Dispatchers.IO) {
             if (viewModel.iptvRepository.pagedChannelsReady()) {
                 viewModel.iptvRepository.pagedChannelCount(null)
@@ -1487,7 +1495,11 @@ fun LiveTvScreen(
         if (indexedPlayingChannel != null || retainedPlayingChannel?.id == id) return@LaunchedEffect
         val hydrated = withContext(Dispatchers.IO) {
             runCatching {
-                viewModel.iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
+                if (viewModel.iptvRepository.isVodChannelId(id)) {
+                    viewModel.iptvRepository.findVodChannelById(id)
+                } else {
+                    viewModel.iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
+                }
             }.getOrNull()
         } ?: return@LaunchedEffect
         if (playingChannelId == id && retainedPlayingChannel?.id != id) {
@@ -1649,9 +1661,24 @@ fun LiveTvScreen(
             }
         }
     }
-    val currentNowNext = remember(playingChannelId, playingCatchupProgram, effectiveGuideNowNext, guideClockMillis) {
-        playingCatchupProgram?.let { IptvNowNext(now = it) }
-            ?: effectiveGuideNowNext[playingChannelId]?.atTime(guideClockMillis)
+    val isVodPlaying = remember(playingChannel?.source) {
+        viewModel.iptvRepository.isVodChannel(playingChannel?.source)
+    }
+    val currentNowNext = remember(playingChannelId, playingCatchupProgram, isVodPlaying, effectiveGuideNowNext, guideClockMillis) {
+        if (isVodPlaying && playingChannel != null) {
+            IptvNowNext(
+                now = IptvProgram(
+                    title = playingChannel.name,
+                    description = playingChannel.source.group,
+                    startUtcMillis = 0L,
+                    endUtcMillis = Long.MAX_VALUE,
+                    category = "VOD",
+                )
+            )
+        } else {
+            playingCatchupProgram?.let { IptvNowNext(now = it) }
+                ?: effectiveGuideNowNext[playingChannelId]?.atTime(guideClockMillis)
+        }
     }
     fun focusedChannelPreview(): Pair<EnrichedChannel, IptvNowNext?>? {
         if (focusZone != LiveTvFocusZone.CHANNEL_LIST && focusZone != LiveTvFocusZone.EPG) return null
@@ -3313,7 +3340,7 @@ fun LiveTvScreen(
                 } else if (looksLikeMpegTsUrl(stream)) {
                     setMimeType(MimeTypes.VIDEO_MP2T)
                 }
-                if (playingCatchupProgram == null) {
+                if (playingCatchupProgram == null && !isVodPlaying) {
                     setLiveConfiguration(buildLiveTvConfiguration())
                 }
                 // DRM configuration from #KODIPROP directives
@@ -4314,6 +4341,8 @@ fun LiveTvScreen(
                     },
                     lockedGroupKeys = lockedGroupSet,
                     onToggleCategoryLock = ::requestCategoryLockToggle,
+                    onPinCategoryToHome = { title, sourceRef -> viewModel.togglePinIptvCategoryToHome(title, sourceRef) },
+                    isCategoryPinned = { sourceRef -> sourceRef in pinnedCategoryRefs },
                     onFocusEnter = {
                         if (focusZone != LiveTvFocusZone.TOPBAR) {
                             focusZone = LiveTvFocusZone.CATEGORY_LIST
@@ -4654,8 +4683,8 @@ fun LiveTvScreen(
                         streamAudioInfo = streamStats.audioInfo,
                         streamBitrate = streamStats.bitrate,
                         categoryName = categoryTitle,
-                        isCatchupMode = playingCatchupProgram != null,
-                        isPlaying = if (playingCatchupProgram != null) playerPlayWhenReady else playerIsPlaying,
+                        isCatchupMode = playingCatchupProgram != null || isVodPlaying,
+                        isPlaying = if (playingCatchupProgram != null || isVodPlaying) playerPlayWhenReady else playerIsPlaying,
                         isBuffering = playerIsBuffering,
                         playbackPositionMs = playerPositionMs,
                         playbackDurationMs = playerDurationMs,

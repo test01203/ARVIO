@@ -14,7 +14,8 @@ enum class CatalogSourceType {
     ADDON,
     HOME_SERVER,
     // The user's own YouTube videos, kept in the catalog itself (see YouTubeCollection).
-    YOUTUBE
+    YOUTUBE,
+    IPTV
 }
 
 enum class CatalogKind {
@@ -144,6 +145,7 @@ val CatalogConfig.effectivePackId: String
         CatalogSourceType.TMDB -> "tmdb"
         CatalogSourceType.HOME_SERVER -> "home_server"
         CatalogSourceType.YOUTUBE -> "youtube"
+        CatalogSourceType.IPTV -> "iptv"
     }
 
 val CatalogConfig.effectivePackName: String
@@ -156,6 +158,7 @@ val CatalogConfig.effectivePackName: String
         CatalogSourceType.TMDB -> "TMDB Catalogs"
         CatalogSourceType.HOME_SERVER -> "Home Server Catalogs"
         CatalogSourceType.YOUTUBE -> "YouTube"
+        CatalogSourceType.IPTV -> "IPTV"
     }
 
 val CatalogConfig.isBulkDeletablePack: Boolean

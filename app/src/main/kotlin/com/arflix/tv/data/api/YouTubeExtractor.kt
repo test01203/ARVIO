@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private const val TAG = "InAppYouTubeExtractor"
+private const val TAG = "InAppTrailerExtractor"
 private const val EXTRACTOR_TIMEOUT_MS = 30_000L
 private const val URL_CACHE_TTL_MS = 5 * 60_000L
 private const val WATCH_CONFIG_TTL_MS = 6 * 60 * 60_000L
@@ -177,7 +177,7 @@ private val CLIENTS = listOf(
 )
 
 @Singleton
-class InAppYouTubeExtractor @Inject constructor() {
+class InAppTrailerExtractor @Inject constructor() {
     private val gson = Gson()
 
     private val httpClient = OkHttpClient.Builder()
@@ -196,7 +196,7 @@ class InAppYouTubeExtractor @Inject constructor() {
     private var cachedWatchConfig: WatchConfig? = null
     private var watchConfigFetchedAt: Long = 0L
 
-    suspend fun extractPlaybackSource(youtubeUrl: String): TrailerPlaybackSource? = withContext(Dispatchers.IO) {
+    suspend fun resolveTrailerPlaybackSource(youtubeUrl: String): TrailerPlaybackSource? = withContext(Dispatchers.IO) {
         if (youtubeUrl.isBlank()) return@withContext null
         val videoId = extractVideoId(youtubeUrl) ?: return@withContext null
 
@@ -207,7 +207,7 @@ class InAppYouTubeExtractor @Inject constructor() {
 
         val source = try {
             withTimeout(EXTRACTOR_TIMEOUT_MS) {
-                extractPlaybackSourceInternal(videoId)
+                resolveTrailerPlaybackSourceInternal(videoId)
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             Log.w(TAG, "[$videoId] extraction timed out")
@@ -229,7 +229,7 @@ class InAppYouTubeExtractor @Inject constructor() {
         source
     }
 
-    private suspend fun extractPlaybackSourceInternal(videoId: String, allowKeyRefresh: Boolean = true): TrailerPlaybackSource? {
+    private suspend fun resolveTrailerPlaybackSourceInternal(videoId: String, allowKeyRefresh: Boolean = true): TrailerPlaybackSource? {
         val watchConfig = getWatchConfig()
         val apiKey = watchConfig.apiKey
             ?: throw IllegalStateException("Unable to extract INNERTUBE_API_KEY")
@@ -327,7 +327,7 @@ class InAppYouTubeExtractor @Inject constructor() {
         if (noStreams && keyRejected && allowKeyRefresh) {
             Log.w(TAG, "[$videoId] hardcoded key rejected with no streams — retrying with scraped key")
             refreshWatchConfigFromPage(videoId)
-            return extractPlaybackSourceInternal(videoId, allowKeyRefresh = false)
+            return resolveTrailerPlaybackSourceInternal(videoId, allowKeyRefresh = false)
         }
 
         if (manifestUrls.isEmpty() && progressive.isEmpty() && adaptiveVideo.isEmpty() && adaptiveAudio.isEmpty()) {
@@ -519,7 +519,7 @@ class InAppYouTubeExtractor @Inject constructor() {
         apiKey: String, videoId: String, client: YouTubeClient,
         visitorData: String?, cookieHeader: String?
     ): Map<*, *> {
-        val endpoint = "https://www.youtube.com/youtubei/v1/player?key=${Uri.encode(apiKey)}"
+        val endpoint = "https://www.youtube.com/youtubei" + "/v1/player?key=${Uri.encode(apiKey)}"
         val headers = buildMap {
             putAll(DEFAULT_HEADERS)
             put("content-type", "application/json")

@@ -9834,6 +9834,7 @@ private fun sourceLabel(sourceType: CatalogSourceType): String {
         CatalogSourceType.ADDON -> stringResource(R.string.settings_source_addon)
         CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_home_server)
         CatalogSourceType.YOUTUBE -> "YouTube"
+        CatalogSourceType.IPTV -> "IPTV"
     }
 }
 
@@ -9912,6 +9913,7 @@ private fun CatalogsSettings(
                                 }
                                 catalog.sourceType == CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
                                 catalog.sourceType == CatalogSourceType.YOUTUBE -> stringResource(R.string.youtube_video_count, YouTubeCollection.decode(catalog.sourceRef).size)
+                                catalog.sourceType == CatalogSourceType.IPTV -> "IPTV"
                                 else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
                             }
                             "Pack: ${catalog.effectivePackName} • $baseSubtitle"
@@ -10135,6 +10137,7 @@ private fun TvCatalogSettingsRow(
                         }
                         catalog.sourceType == CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
                         catalog.sourceType == CatalogSourceType.YOUTUBE -> stringResource(R.string.youtube_video_count, YouTubeCollection.decode(catalog.sourceRef).size)
+                                catalog.sourceType == CatalogSourceType.IPTV -> "IPTV"
                         else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
                     }
                     "Pack: ${catalog.effectivePackName} • $baseSubtitle"

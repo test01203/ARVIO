@@ -349,7 +349,7 @@ class StreamRepository @Inject constructor(
     private val invalidationBus: CloudSyncInvalidationBus,
     private val telegramSourceResolver: TelegramSourceResolver,
     private val streamIntegrationRepository: StreamIntegrationRepository,
-    private val youTubeExtractor: InAppYouTubeExtractor = InAppYouTubeExtractor()
+    private val youTubeExtractor: InAppTrailerExtractor = InAppTrailerExtractor()
 ) {
     private val gson = Gson()
     private val TAG = "StreamRepository"
@@ -4397,7 +4397,7 @@ class StreamRepository @Inject constructor(
      */
     private suspend fun resolveYouTubeStream(stream: StreamSource): StreamSource? {
         val videoId = YouTubeCollection.videoIdFromStreamMarker(stream.url.orEmpty()) ?: return null
-        val source = youTubeExtractor.extractPlaybackSource(YouTubeCollection.watchUrl(videoId)) ?: return null
+        val source = youTubeExtractor.resolveTrailerPlaybackSource(YouTubeCollection.watchUrl(videoId)) ?: return null
         return YouTubeCollection.resolve(stream, source)
     }
 

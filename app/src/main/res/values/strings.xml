@@ -1349,6 +1349,7 @@
     <string name="live_label_all_channels">All Channels</string>
     <string name="live_label_search_channels">Search channels</string>
     <string name="live_cat_favorites">Favorites</string>
+    <string name="live_cat_vod">VOD</string>
     <string name="live_cat_recently_watched">Recently Watched</string>
     <string name="live_cat_adult">Adult</string>
     <string name="live_cat_ungrouped">Ungrouped</string>
@@ -1918,6 +1919,10 @@
 
 
     <!-- Live TV category context menu -->
+    <string name="live_menu_pin_home">Pin to Home</string>
+    <string name="live_menu_unpin_home">Remove from Home</string>
+    <string name="iptv_pinned_to_home">Pinned to Home</string>
+    <string name="iptv_unpinned_from_home">Removed from Home</string>
     <string name="live_menu_move_top">Move to top</string>
     <string name="live_menu_move_up">Move up</string>
     <string name="live_menu_move_down">Move down</string>

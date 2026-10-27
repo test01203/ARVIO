@@ -336,4 +336,9 @@
     <string name="youtube_ok_move_down">%1$d • OK: הזזה למטה</string>
     <string name="youtube_ok_remove">%1$d • OK: הסרה</string>
     <string name="youtube_video_removed">הוסר: %1$s</string>
+    <string name="live_cat_vod">VOD</string>
+    <string name="live_menu_pin_home">הוסף למסך הבית</string>
+    <string name="live_menu_unpin_home">הסר ממסך הבית</string>
+    <string name="iptv_pinned_to_home">נוסף למסך הבית</string>
+    <string name="iptv_unpinned_from_home">הוסר ממסך הבית</string>
 </resources>

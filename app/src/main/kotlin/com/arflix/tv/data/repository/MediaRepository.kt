@@ -1017,6 +1017,7 @@ class MediaRepository @Inject constructor(
             CatalogSourceType.PREINSTALLED -> emptyList()
             CatalogSourceType.HOME_SERVER -> emptyList()
             CatalogSourceType.YOUTUBE -> emptyList()
+            CatalogSourceType.IPTV -> emptyList()
         }
         if (mediaRefs.isEmpty()) return@coroutineScope null
 
@@ -1080,6 +1081,7 @@ class MediaRepository @Inject constructor(
                 CatalogSourceType.PREINSTALLED -> emptyList()
                 CatalogSourceType.HOME_SERVER -> emptyList()
                 CatalogSourceType.YOUTUBE -> emptyList()
+            CatalogSourceType.IPTV -> emptyList()
             }.distinct()
 
             if (mediaRefs.isEmpty()) return@coroutineScope CategoryPageResult(emptyList(), hasMore = false)

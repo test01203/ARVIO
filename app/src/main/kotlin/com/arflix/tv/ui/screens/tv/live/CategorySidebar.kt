@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Visibility
@@ -128,6 +129,8 @@ fun CategorySidebar(
     onMoveCategoryDown: (String?, String) -> Unit = { _, _ -> },
     lockedGroupKeys: Set<String> = emptySet(),
     onToggleCategoryLock: (String?, String, Boolean) -> Unit = { _, _, _ -> },
+    onPinCategoryToHome: ((title: String, sourceRef: String) -> Unit)? = null,
+    isCategoryPinned: ((sourceRef: String) -> Boolean)? = null,
     onFocusEnter: () -> Unit = {},
     onMoveRight: () -> Unit = {},
     onMoveUpFromSearch: () -> Unit = {},
@@ -159,6 +162,7 @@ fun CategorySidebar(
     val contentVisible = if (fixedViewport) LocalLiveDrawerVisible.current else expanded || contentAlpha > 0f
     var expandedCountry by rememberSaveable { mutableStateOf<String?>(null) }
     var expandedAll by rememberSaveable { mutableStateOf(false) }
+    var expandedVod by rememberSaveable { mutableStateOf(false) }
     var expandedPlaylistIds by rememberSaveable {
         mutableStateOf(
             playlistSections.firstOrNull { section ->
@@ -178,19 +182,32 @@ fun CategorySidebar(
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     fun openCategoryMenu(category: LiveCategory, hidden: Boolean) {
-        val groupName = category.playlistGroupName ?: return
+        val groupName = category.playlistGroupName ?: category.label
         val groupKey = category.playlistId?.let { PlaylistGroupKey.build(it, groupName) }
         val isLocked = groupKey != null && groupKey in lockedGroupKeys
+        val isVod = category.id.startsWith("vod_") || category.id == "vod_all"
+        val sourceRef = if (category.id == "vod_all") {
+            "iptv_vod:all"
+        } else if (category.id.startsWith("vod_cat:")) {
+            "iptv_vod:$groupName"
+        } else {
+            "iptv_group:${category.playlistId.orEmpty()}:$groupName"
+        }
+        val isPinned = isCategoryPinned?.invoke(sourceRef) == true
         menuSelectArmed = false
         activeMenu = CategoryMenuState(
             id = if (hidden) "hidden:${category.id}" else category.id,
             playlistId = category.playlistId,
             groupName = groupName,
-            canMove = !hidden,
-            canHide = !hidden,
-            canUnhide = hidden,
-            canLock = !hidden && !isLocked,
-            canUnlock = isLocked,
+            canMove = !hidden && !isVod,
+            canHide = !hidden && !isVod,
+            canUnhide = hidden && !isVod,
+            canLock = !hidden && !isLocked && !isVod,
+            canUnlock = isLocked && !isVod,
+            canPinToHome = onPinCategoryToHome != null && !isPinned,
+            canUnpinFromHome = onPinCategoryToHome != null && isPinned,
+            sourceRef = sourceRef,
+            title = groupName,
         )
     }
 
@@ -236,6 +253,16 @@ fun CategorySidebar(
             onUnlock = {
                 activeMenu = null
                 onToggleCategoryLock(menu.playlistId, menu.groupName, true)
+            },
+            canPinToHome = menu.canPinToHome,
+            canUnpinFromHome = menu.canUnpinFromHome,
+            onPinToHome = {
+                activeMenu = null
+                onPinCategoryToHome?.invoke(menu.title, menu.sourceRef)
+            },
+            onUnpinFromHome = {
+                activeMenu = null
+                onPinCategoryToHome?.invoke(menu.title, menu.sourceRef)
             },
         )
     }.orEmpty()
@@ -592,7 +619,8 @@ fun CategorySidebar(
             ) {
                 itemsIndexed(visibleTopCategories, key = { _, cat -> "top:${cat.id}" }) { index, cat ->
                     val isAllGroup = cat.id == "all" && cat.children.isNotEmpty()
-                    val isOpen = isAllGroup && expandedAll
+                    val isVodGroup = cat.id == "vod_all" && cat.children.isNotEmpty()
+                    val isOpen = (isAllGroup && expandedAll) || (isVodGroup && expandedVod)
                     val itemKey = "top:${cat.id}"
                     val requester = rememberCategoryRequester(
                         key = itemKey,
@@ -609,25 +637,58 @@ fun CategorySidebar(
                         icon = iconFor(cat),
                         active = selectedId == cat.id,
                         expanded = contentVisible,
-                        hasChildren = isAllGroup,
+                        hasChildren = isAllGroup || isVodGroup,
                         isOpenGroup = isOpen,
                         focusRequester = requester,
                         onFocused = {
                             lastFocusedCategoryKey = itemKey
                             onCategoryFocused()
                         },
+                        onLongClick = { openCategoryMenu(cat, hidden = false) },
                         onClick = {
                             if (isAllGroup) {
                                 // Expanding must not close the drawer, or the
                                 // children are never reachable.
                                 expandedAll = !expandedAll
                                 onSelectKeepOpen(cat.id)
+                            } else if (isVodGroup) {
+                                expandedVod = !expandedVod
+                                onSelectKeepOpen(cat.id)
                             } else {
                                 onSelect(cat.id)
                             }
                         },
                     )
-                    if (isOpen && contentVisible) {
+                    if (isVodGroup && isOpen && contentVisible) {
+                        cat.children.forEachIndexed { subIndex, child ->
+                            val childKey = "vod:child:${child.id}"
+                            val childRequester = rememberCategoryRequester(
+                                key = childKey,
+                                id = child.id,
+                                selectedId = selectedId,
+                                isTopFirst = false,
+                                selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                                firstCategoryFocusRequester = firstCategoryFocusRequester,
+                                categoryFocusRequesters = categoryFocusRequesters,
+                            )
+                            SidebarRow(
+                                label = liveCategoryDisplayLabel(child),
+                                count = child.count,
+                                icon = iconFor(child),
+                                active = selectedId == child.id,
+                                expanded = contentVisible,
+                                indent = 28.dp,
+                                focusRequester = childRequester,
+                                onFocused = {
+                                    lastFocusedCategoryKey = childKey
+                                    onCategoryFocused()
+                                },
+                                onLongClick = { openCategoryMenu(child, hidden = false) },
+                                onClick = { onSelect(child.id) },
+                            )
+                        }
+                    }
+                    if (isAllGroup && isOpen && contentVisible) {
                         cat.children.forEach { child ->
                             val childKey = "top:child:${child.id}"
                             val childRequester = rememberCategoryRequester(
@@ -1281,7 +1342,17 @@ private fun buildCategoryMenuActions(
     onMoveDown: () -> Unit,
     onLock: () -> Unit,
     onUnlock: () -> Unit,
+    canPinToHome: Boolean = false,
+    canUnpinFromHome: Boolean = false,
+    onPinToHome: () -> Unit = {},
+    onUnpinFromHome: () -> Unit = {},
 ): List<CategoryMenuAction> = buildList {
+    if (canPinToHome) {
+        add(CategoryMenuAction(R.string.live_menu_pin_home, Icons.Filled.Home, onPinToHome))
+    }
+    if (canUnpinFromHome) {
+        add(CategoryMenuAction(R.string.live_menu_unpin_home, Icons.Filled.Home, onUnpinFromHome))
+    }
     if (canMove) {
         add(CategoryMenuAction(R.string.live_menu_move_top, Icons.Filled.KeyboardArrowUp, onMoveToTop))
         add(CategoryMenuAction(R.string.live_menu_move_up, Icons.Filled.KeyboardArrowUp, onMoveUp))
@@ -1316,6 +1387,10 @@ private data class CategoryMenuState(
     val canUnhide: Boolean,
     val canLock: Boolean,
     val canUnlock: Boolean,
+    val canPinToHome: Boolean = false,
+    val canUnpinFromHome: Boolean = false,
+    val sourceRef: String = "",
+    val title: String = "",
     val focusedIndex: Int = 0,
 )
 

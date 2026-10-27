@@ -62,6 +62,7 @@ data class LiveCategoryIndex(
         return when (categoryId) {
             "fav" -> favorites.mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds || it.id in restrictedIds }
             "recent" -> recents.toList().asReversed().mapNotNull(byId::get).filterNot { it.isAdult || it.id in hiddenIds || it.id in restrictedIds }
+            "vod_all" -> byCategory["vod_all"].orEmpty().filterNot { it.id in restrictedIds }
             else -> byCategory[categoryId].orEmpty().filterNot { it.id in restrictedIds }
         }
     }
@@ -401,6 +402,7 @@ fun liveCategoryLabel(raw: String): String = when (raw) {
     "Favorites" -> stringResource(R.string.live_cat_favorites)
     "Recently Watched" -> stringResource(R.string.live_cat_recently_watched)
     "All Channels" -> stringResource(R.string.live_label_all_channels)
+    "VOD" -> stringResource(R.string.live_cat_vod)
     "Sports" -> stringResource(R.string.live_cat_sports)
     "Adult" -> stringResource(R.string.live_cat_adult)
     "Ungrouped" -> stringResource(R.string.live_cat_ungrouped)
@@ -557,8 +559,16 @@ fun buildCategoryTree(
     val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroups = hiddenGroups.toHashSet()
+    val vodGroupCounts = LinkedHashMap<String, Int>()
+    var vodTotalCount = 0
 
     channels.forEach { channel ->
+        if (channel.source.id.contains(":vod:") || channel.source.group.startsWith("VOD:")) {
+            val vodSubgroup = channel.source.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
+            vodGroupCounts[vodSubgroup] = (vodGroupCounts[vodSubgroup] ?: 0) + 1
+            vodTotalCount++
+            return@forEach
+        }
         val playlistId = channelPlaylistId(channel.id)
         val hiddenPlaylistId = playlistId
         val groupLabel = playlistGroupLabel(channel.source.group)
@@ -662,17 +672,40 @@ fun buildCategoryTree(
     val adultCategories = listOf(
         LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock),
     ).filter { it.count > 0 }
-    val top = listOf(
-        LiveCategory("fav", "Favorites", favoritesCount, CategoryIcon.Favorite),
-        LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent),
-        LiveCategory(
-            id = "all",
-            label = "All Channels",
-            count = allCount,
-            iconToken = CategoryIcon.All,
-            children = autoGlobal + countryCategories + adultCategories,
-        ),
-    )
+    val top = buildList {
+        add(LiveCategory("fav", "Favorites", favoritesCount, CategoryIcon.Favorite))
+        add(LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent))
+        add(
+            LiveCategory(
+                id = "all",
+                label = "All Channels",
+                count = allCount,
+                iconToken = CategoryIcon.All,
+                children = autoGlobal + countryCategories + adultCategories,
+            )
+        )
+        if (vodTotalCount > 0) {
+            val vodSubs = vodGroupCounts.map { (catName, count) ->
+                LiveCategory(
+                    id = "vod_cat:${catName.lowercase()}",
+                    label = catName,
+                    count = count,
+                    iconToken = CategoryIcon.SubEntry,
+                    playlistGroupName = catName,
+                )
+            }
+            add(
+                LiveCategory(
+                    id = "vod_all",
+                    label = "VOD",
+                    count = vodTotalCount,
+                    iconToken = CategoryIcon.Movie,
+                    children = vodSubs,
+                    playlistGroupName = "VOD",
+                )
+            )
+        }
+    }
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
         LiveCategory(
             id = id,
@@ -734,8 +767,16 @@ fun buildCategoryTree(
     val playlistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroupCounts = LinkedHashMap<String, Pair<String, Int>>()
     val hiddenPlaylistGroups = hiddenGroups.toHashSet()
+    val vodGroupCounts = LinkedHashMap<String, Int>()
+    var vodTotalCount = 0
 
     channels.forEach { channel ->
+        if (channel.id.contains(":vod:") || channel.group.startsWith("VOD:")) {
+            val vodSubgroup = channel.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
+            vodGroupCounts[vodSubgroup] = (vodGroupCounts[vodSubgroup] ?: 0) + 1
+            vodTotalCount++
+            return@forEach
+        }
         val playlistId = channelPlaylistId(channel.id)
         val hiddenPlaylistId = playlistId
         val traits = channel.traits()
@@ -839,17 +880,40 @@ fun buildCategoryTree(
         .filterNot { channel -> isAdultGroup(channel.group, channel.name) || isHiddenPlaylistGroup(channel, hiddenGroups) }
         .map { it.id }
         .toHashSet()
-    val top = listOf(
-        LiveCategory("fav", "Favorites", favorites.count { it in channelIds }, CategoryIcon.Favorite),
-        LiveCategory("recent", "Recently Watched", recents.count { it in channelIds }, CategoryIcon.Recent),
-        LiveCategory(
-            id = "all",
-            label = "All Channels",
-            count = allCount,
-            iconToken = CategoryIcon.All,
-            children = autoGlobal + countryCategories + adultCategories,
-        ),
-    )
+    val top = buildList {
+        add(LiveCategory("fav", "Favorites", favorites.count { it in channelIds }, CategoryIcon.Favorite))
+        add(LiveCategory("recent", "Recently Watched", recents.count { it in channelIds }, CategoryIcon.Recent))
+        add(
+            LiveCategory(
+                id = "all",
+                label = "All Channels",
+                count = allCount,
+                iconToken = CategoryIcon.All,
+                children = autoGlobal + countryCategories + adultCategories,
+            )
+        )
+        if (vodTotalCount > 0) {
+            val vodSubs = vodGroupCounts.map { (catName, count) ->
+                LiveCategory(
+                    id = "vod_cat:${catName.lowercase()}",
+                    label = catName,
+                    count = count,
+                    iconToken = CategoryIcon.SubEntry,
+                    playlistGroupName = catName,
+                )
+            }
+            add(
+                LiveCategory(
+                    id = "vod_all",
+                    label = "VOD",
+                    count = vodTotalCount,
+                    iconToken = CategoryIcon.Movie,
+                    children = vodSubs,
+                    playlistGroupName = "VOD",
+                )
+            )
+        }
+    }
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
         LiveCategory(
             id = id,
@@ -983,6 +1047,8 @@ fun buildFastStartupChannelState(
     var recentCount = 0
     var adultCount = 0
     var ultraHdCount = 0
+    val vodGroupCounts = LinkedHashMap<String, Int>()
+    var vodTotalCount = 0
 
     fun add(categoryId: String, channel: EnrichedChannel) {
         buckets.getOrPut(categoryId) { ArrayList() }.add(channel)
@@ -990,6 +1056,16 @@ fun buildFastStartupChannelState(
 
     channels.forEachIndexed { index, rawChannel ->
         val channel = rawChannel.enrichForFastStartup(index + 1)
+        if (rawChannel.id.contains(":vod:") || rawChannel.group.startsWith("VOD:")) {
+            allChannels += channel
+            byId[channel.id] = channel
+            add("vod_all", channel)
+            val vodSubgroup = rawChannel.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
+            add("vod_cat:${vodSubgroup.lowercase()}", channel)
+            vodGroupCounts[vodSubgroup] = (vodGroupCounts[vodSubgroup] ?: 0) + 1
+            vodTotalCount++
+            return@forEachIndexed
+        }
         val playlistId = channelPlaylistId(rawChannel.id)
         val hiddenPlaylistId = playlistId
         val groupLabel = playlistGroupLabel(rawChannel.group)
@@ -1034,17 +1110,40 @@ fun buildFastStartupChannelState(
     val adultCategories = listOf(
         LiveCategory("adult", "Adult", adultCount, CategoryIcon.Lock),
     ).filter { it.count > 0 }
-    val top = listOf(
-        LiveCategory("fav", "Favorites", favoriteCount, CategoryIcon.Favorite),
-        LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent),
-        LiveCategory(
-            id = "all",
-            label = "All Channels",
-            count = allCount,
-            iconToken = CategoryIcon.All,
-            children = autoGlobal + adultCategories,
-        ),
-    )
+    val top = buildList {
+        add(LiveCategory("fav", "Favorites", favoriteCount, CategoryIcon.Favorite))
+        add(LiveCategory("recent", "Recently Watched", recentCount, CategoryIcon.Recent))
+        add(
+            LiveCategory(
+                id = "all",
+                label = "All Channels",
+                count = allCount,
+                iconToken = CategoryIcon.All,
+                children = autoGlobal + adultCategories,
+            )
+        )
+        if (vodTotalCount > 0) {
+            val vodSubs = vodGroupCounts.map { (catName, count) ->
+                LiveCategory(
+                    id = "vod_cat:${catName.lowercase()}",
+                    label = catName,
+                    count = count,
+                    iconToken = CategoryIcon.SubEntry,
+                    playlistGroupName = catName,
+                )
+            }
+            add(
+                LiveCategory(
+                    id = "vod_all",
+                    label = "VOD",
+                    count = vodTotalCount,
+                    iconToken = CategoryIcon.Movie,
+                    children = vodSubs,
+                    playlistGroupName = "VOD",
+                )
+            )
+        }
+    }
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
         LiveCategory(
             id = id,
@@ -1262,6 +1361,12 @@ fun buildCategoryIndex(
 
     channels.forEach { channel ->
         byId[channel.id] = channel
+        if (channel.source.id.contains(":vod:") || channel.source.group.startsWith("VOD:")) {
+            add("vod_all", channel)
+            val vodSubgroup = channel.source.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
+            add("vod_cat:${vodSubgroup.lowercase()}", channel)
+            return@forEach
+        }
         add(playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group), channel)
         if (isHiddenPlaylistGroup(channel, hiddenGroups)) {
             hiddenIds += channel.id

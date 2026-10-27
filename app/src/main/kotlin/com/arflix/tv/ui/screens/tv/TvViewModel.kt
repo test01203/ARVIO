@@ -11,6 +11,7 @@ import com.arflix.tv.data.model.IptvGuideHistory
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.PlaylistGroupKey
+import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
@@ -118,12 +119,40 @@ private data class IptvGroupPreferences(
 class TvViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     val iptvRepository: IptvRepository,
+    val catalogRepository: CatalogRepository,
     private val cloudSyncRepository: CloudSyncRepository,
     private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
     private val sportsRepository: com.arflix.tv.data.repository.SportsRepository,
     val sportsAddons: com.arflix.tv.data.repository.SportsAddonRepository,
     private val profileManager: com.arflix.tv.data.repository.ProfileManager,
 ) : ViewModel() {
+
+    private val _vodChannels = MutableStateFlow<List<IptvChannel>>(emptyList())
+    val vodChannels: StateFlow<List<IptvChannel>> = _vodChannels.asStateFlow()
+
+    fun loadVodChannels(allowNetwork: Boolean = false) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val cached = iptvRepository.loadLiveTvVodChannels(allowNetwork = false)
+            if (cached.isNotEmpty()) {
+                _vodChannels.value = cached
+            }
+            if (allowNetwork || cached.isEmpty()) {
+                val fresh = iptvRepository.loadLiveTvVodChannels(allowNetwork = true)
+                if (fresh.isNotEmpty()) {
+                    _vodChannels.value = fresh
+                }
+            }
+        }
+    }
+
+    fun observePinnedIptvCategoryRefs(): kotlinx.coroutines.flow.Flow<Set<String>> =
+        catalogRepository.observePinnedIptvCategoryRefs()
+
+    fun togglePinIptvCategoryToHome(title: String, sourceRef: String) {
+        viewModelScope.launch {
+            catalogRepository.togglePinIptvCategoryToHome(title, sourceRef)
+        }
+    }
 
     suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
 

@@ -3770,6 +3770,91 @@ class IptvRepository @Inject constructor(
     fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
         runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
 
+    @Volatile
+    private var cachedLiveTvVodChannels: List<IptvChannel> = emptyList()
+
+    fun getCachedLiveTvVodChannels(): List<IptvChannel> = cachedLiveTvVodChannels
+
+    fun isVodChannel(channel: IptvChannel?): Boolean {
+        if (channel == null) return false
+        return channel.id.contains(":vod:") || channel.group.startsWith("VOD:") || channel.streamUrl.contains("/movie/")
+    }
+
+    fun isVodChannelId(channelId: String?): Boolean {
+        if (channelId == null) return false
+        return channelId.contains(":vod:")
+    }
+
+    suspend fun loadLiveTvVodChannels(allowNetwork: Boolean = false): List<IptvChannel> = withContext(Dispatchers.IO) {
+        if (!allowNetwork && cachedLiveTvVodChannels.isNotEmpty()) {
+            return@withContext cachedLiveTvVodChannels
+        }
+        val config = observeConfig().first()
+        val providers = xtreamProvidersForVodImport(config)
+        if (providers.isEmpty()) return@withContext emptyList()
+
+        val allVod = mutableListOf<IptvChannel>()
+        for (provider in providers) {
+            val creds = provider.creds
+            val categories = loadXtreamVodCategoriesInternal(creds, allowNetwork)
+            val categoryMap = categories.associate { (it.categoryId?.trim().orEmpty()) to (it.categoryName?.trim().orEmpty()) }
+            val streams = getXtreamVodStreams(creds, allowNetwork, fast = true)
+
+            streams.forEach { stream ->
+                val streamId = stream.streamId ?: return@forEach
+                val name = stream.name?.trim().orEmpty().ifBlank { return@forEach }
+                val catId = stream.categoryId?.trim().orEmpty()
+                val catName = categoryMap[catId]?.ifBlank { null } ?: "VOD"
+                val ext = stream.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
+                val streamUrl = "${creds.baseUrl}/movie/${creds.username}/${creds.password}/$streamId.$ext"
+                allVod.add(
+                    IptvChannel(
+                        id = "xtream:vod:$streamId",
+                        name = name,
+                        streamUrl = streamUrl,
+                        group = "VOD: $catName",
+                        logo = stream.streamIcon?.takeIf { it.isNotBlank() },
+                        epgId = null,
+                        rawTitle = name,
+                        xtreamStreamId = streamId
+                    )
+                )
+            }
+        }
+        if (allVod.isNotEmpty()) {
+            cachedLiveTvVodChannels = allVod
+        }
+        allVod
+    }
+
+    suspend fun findVodChannelById(channelId: String): IptvChannel? = withContext(Dispatchers.IO) {
+        if (!isVodChannelId(channelId)) return@withContext null
+        cachedLiveTvVodChannels.firstOrNull { it.id == channelId }?.let { return@withContext it }
+        val streams = cachedXtreamVodStreams
+        val streamId = channelId.substringAfter(":vod:").toIntOrNull()
+        if (streams.isNotEmpty() && streamId != null) {
+            val config = observeConfig().first()
+            val creds = xtreamCredentialsForVodImport(config).firstOrNull()
+            if (creds != null) {
+                val stream = streams.firstOrNull { it.streamId == streamId }
+                if (stream != null) {
+                    val ext = stream.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
+                    val streamUrl = "${creds.baseUrl}/movie/${creds.username}/${creds.password}/$streamId.$ext"
+                    return@withContext IptvChannel(
+                        id = channelId,
+                        name = stream.name.orEmpty(),
+                        streamUrl = streamUrl,
+                        group = "VOD",
+                        logo = stream.streamIcon?.takeIf { it.isNotBlank() },
+                        xtreamStreamId = streamId
+                    )
+                }
+            }
+        }
+        val loaded = loadLiveTvVodChannels(allowNetwork = false)
+        loaded.firstOrNull { it.id == channelId }
+    }
+
     fun pagedChannelIndexOf(groupTitle: String?, channelId: String): Int =
         runCatching { channelStore.indexOfId(currentEpgIndexKey, groupTitle, channelId) }.getOrDefault(-1)
 
@@ -5074,7 +5159,8 @@ class IptvRepository @Inject constructor(
         @SerializedName("container_extension") val containerExtension: String? = null,
         @SerializedName(value = "imdb", alternate = ["imdb_id", "imdbid"]) val imdb: String? = null,
         @SerializedName(value = "tmdb", alternate = ["tmdb_id", "tmdbid"]) val tmdb: String? = null,
-        @SerializedName("category_id") val categoryId: String? = null
+        @SerializedName("category_id") val categoryId: String? = null,
+        @SerializedName(value = "stream_icon", alternate = ["icon", "poster"]) val streamIcon: String? = null
     )
 
     private data class XtreamSeriesItem(

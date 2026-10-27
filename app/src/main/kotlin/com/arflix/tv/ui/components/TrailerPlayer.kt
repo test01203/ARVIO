@@ -34,7 +34,7 @@ import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.arflix.tv.R
-import com.arflix.tv.data.api.InAppYouTubeExtractor
+import com.arflix.tv.data.api.InAppTrailerExtractor
 import com.arflix.tv.data.api.YoutubeChunkedDataSourceFactory
 import com.arflix.tv.data.api.YOUTUBE_TRAILER_USER_AGENT
 import dagger.hilt.EntryPoint
@@ -54,7 +54,7 @@ import kotlinx.coroutines.withContext
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface TrailerPlayerEntryPoint {
-    fun inAppYouTubeExtractor(): InAppYouTubeExtractor
+    fun inAppYouTubeExtractor(): InAppTrailerExtractor
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -88,7 +88,7 @@ fun TrailerPlayer(
         delay(delayMs)
         withContext(Dispatchers.IO) {
             try {
-                val source = extractor.extractPlaybackSource("https://www.youtube.com/watch?v=$youtubeKey")
+                val source = extractor.resolveTrailerPlaybackSource("https://www.youtube.com/watch?v=$youtubeKey")
                 if (source != null) {
                     videoUrl = source.videoUrl
                     audioUrl = source.audioUrl

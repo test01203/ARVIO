@@ -28,6 +28,7 @@ import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.R
 import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.MediaRepository.CategoryPageResult
 import com.arflix.tv.data.repository.PersonalListsRepository
 import com.arflix.tv.ui.components.PersonalListPicker
 import com.arflix.tv.network.OkHttpProvider
@@ -394,7 +395,7 @@ class HomeViewModel @Inject constructor(
     private val apkDownloader: com.arflix.tv.updater.ApkDownloader,
     private val updatePreferences: com.arflix.tv.updater.UpdatePreferences,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
-    private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
+    private val youTubeExtractor: com.arflix.tv.data.api.InAppTrailerExtractor,
     private val personalListsRepository: PersonalListsRepository,
     private val kidsContentFilter: KidsContentFilter,
     @ApplicationContext private val context: Context
@@ -1185,17 +1186,18 @@ class HomeViewModel @Inject constructor(
             overviewParts.add("Next: ${fmtRange(nextProgram)}  ${nextProgram.title}")
         }
 
+        val isVod = iptvRepository.isVodChannel(channel)
         return MediaItem(
             id = stableId,
             title = channel.name,
             subtitle = channel.group,
-            overview = overviewParts.joinToString("\n").ifBlank { "Live TV" },
-            mediaType = MediaType.TV,
+            overview = if (isVod) channel.group else overviewParts.joinToString("\n").ifBlank { "Live TV" },
+            mediaType = if (isVod) MediaType.MOVIE else MediaType.TV,
             image = channel.logo ?: "",
             backdrop = channel.logo,
-            badge = "LIVE",
-            status = "$IPTV_STATUS_PREFIX${channel.id}",
-            isOngoing = true
+            badge = if (isVod) "VOD" else "LIVE",
+            status = "${IPTV_STATUS_PREFIX}${channel.id}",
+            isOngoing = !isVod
         )
     }
 
@@ -1288,6 +1290,74 @@ class HomeViewModel @Inject constructor(
         val prefs = context.settingsDataStore.data.first()
         prefs[profileManager.profileBooleanKey(IPTV_FAVORITES_ON_HOME)] ?: true
     }.getOrDefault(true)
+
+    private suspend fun loadAnyCatalogPage(
+        catalog: CatalogConfig,
+        offset: Int,
+        limit: Int
+    ): CategoryPageResult {
+        if (catalog.sourceType == CatalogSourceType.IPTV) {
+            return loadIptvCatalogPage(catalog, offset, limit)
+        }
+        return mediaRepository.loadCustomCatalogPage(catalog, offset, limit)
+    }
+
+    private suspend fun loadIptvCatalogPage(
+        catalog: CatalogConfig,
+        offset: Int,
+        limit: Int
+    ): CategoryPageResult = withContext(Dispatchers.IO) {
+        val sourceRef = catalog.sourceRef.orEmpty()
+        val channels: List<com.arflix.tv.data.model.IptvChannel> = when {
+            sourceRef.startsWith("iptv_vod:") -> {
+                val groupName = sourceRef.removePrefix("iptv_vod:")
+                val vodChannels = iptvRepository.loadLiveTvVodChannels(allowNetwork = false).ifEmpty {
+                    iptvRepository.loadLiveTvVodChannels(allowNetwork = true)
+                }
+                if (groupName.isBlank() || groupName.equals("all", ignoreCase = true) || groupName.equals("VOD", ignoreCase = true)) {
+                    vodChannels
+                } else {
+                    vodChannels.filter { it.group.removePrefix("VOD:").trim().equals(groupName, ignoreCase = true) }
+                }
+            }
+            sourceRef.startsWith("iptv_group:") -> {
+                val parts = sourceRef.removePrefix("iptv_group:").split(":", limit = 2)
+                val playlistId = if (parts.size == 2) parts[0].takeIf { it.isNotBlank() } else null
+                val groupName = if (parts.size == 2) parts[1] else parts[0]
+                val paged = iptvRepository.pagedChannelWindow(playlistId, groupName, 0, -1)
+                if (paged.isNotEmpty()) {
+                    paged
+                } else {
+                    val snapshot = iptvRepository.getMemoryCachedSnapshot()
+                    snapshot?.channels.orEmpty().filter { ch ->
+                        val matchesGroup = ch.group.trim().equals(groupName, ignoreCase = true)
+                        if (playlistId != null) {
+                            matchesGroup && com.arflix.tv.data.repository.StalkerPortalSupport.playlistIdFromChannelId(ch.id) == playlistId
+                        } else {
+                            matchesGroup
+                        }
+                    }
+                }
+            }
+            else -> emptyList()
+        }
+
+        if (channels.isEmpty() || offset >= channels.size) {
+            return@withContext CategoryPageResult(emptyList(), hasMore = false)
+        }
+
+        val slice = channels.drop(offset).take(limit)
+        val snapshot = iptvRepository.getMemoryCachedSnapshot()
+        val nowNext = snapshot?.nowNext.orEmpty()
+        val items = slice.map { ch ->
+            iptvChannelToMediaItem(ch, nowNext[ch.id])
+        }
+        CategoryPageResult(
+            items = items,
+            hasMore = offset + slice.size < channels.size,
+            nextOffset = offset + slice.size
+        )
+    }
 
     private fun isCustomCatalogConfig(cfg: CatalogConfig): Boolean {
         if (cfg.kind == CatalogKind.COLLECTION || cfg.kind == CatalogKind.COLLECTION_RAIL) {
@@ -1778,7 +1848,7 @@ class HomeViewModel @Inject constructor(
             for (catalog in catalogs) {
                 if (!isCurrent()) return@launch
                 val page = runCatching {
-                    mediaRepository.loadCustomCatalogPage(catalog, offset = 0, limit = catalogInitialLimit(catalog))
+                    loadAnyCatalogPage(catalog, offset = 0, limit = catalogInitialLimit(catalog))
                 }.getOrNull() ?: continue
                 withContext(Dispatchers.Main.immediate) {
                     if (!isCurrent()) return@withContext
@@ -3061,7 +3131,7 @@ class HomeViewModel @Inject constructor(
                         async {
                             customSemaphore.withPermit {
                                 try {
-                                    val result = mediaRepository.loadCustomCatalogPage(cfg, 0, catalogInitialLimit(cfg))
+                                    val result = loadAnyCatalogPage(cfg, 0, catalogInitialLimit(cfg))
                                     if (result.items.isEmpty()) return@withPermit null
                                     val category = Category(cfg.id, cfg.title, result.items).withTop10CapIfNeeded()
                                     withContext(Dispatchers.Main.immediate) {
@@ -3820,7 +3890,7 @@ class HomeViewModel @Inject constructor(
                 customSemaphore.withPermit {
                     try {
                         val limit = if (isHardCappedTop10Catalog(cfg.id)) TOP_10_ITEM_LIMIT else catalogInitialLimit(cfg)
-                        val result = mediaRepository.loadCustomCatalogPage(catalog = cfg, offset = 0, limit = limit)
+                        val result = loadAnyCatalogPage(catalog = cfg, offset = 0, limit = limit)
                         if (result.items.isNotEmpty()) {
                             val category = Category(id = cfg.id, title = cfg.title, items = result.items).withTop10CapIfNeeded()
                             withContext(Dispatchers.Main.immediate) {
@@ -3973,7 +4043,7 @@ class HomeViewModel @Inject constructor(
                 async(networkDispatcher) {
                     catalogSemaphore.withPermit {
                         val firstPage = runCatching {
-                            mediaRepository.loadCustomCatalogPage(
+                            loadAnyCatalogPage(
                                 catalog = catalog,
                                 offset = 0,
                                 limit = catalogInitialLimit(catalog)
@@ -4156,7 +4226,7 @@ class HomeViewModel @Inject constructor(
                 } else {
                     // MDBList/custom catalog (including preinstalled MDBList ones)
                     val cfg = catalog ?: return@launch
-                    mediaRepository.loadCustomCatalogPage(
+                    loadAnyCatalogPage(
                         catalog = cfg,
                         offset = pagination.nextOffset,
                         limit = pageSize
@@ -5164,7 +5234,7 @@ class HomeViewModel @Inject constructor(
     private fun prefetchTrailerUrl(trailerKey: String) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
-                youTubeExtractor.extractPlaybackSource("https://www.youtube.com/watch?v=$trailerKey")
+                youTubeExtractor.resolveTrailerPlaybackSource("https://www.youtube.com/watch?v=$trailerKey")
             }
         }
     }

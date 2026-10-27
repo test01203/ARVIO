@@ -368,6 +368,43 @@ class CatalogRepository @Inject constructor(
         invalidationBus.markDirty(CloudSyncScope.CATALOGS, safeProfileId, "replace catalogs")
     }
 
+    fun observePinnedIptvCategoryRefs(): kotlinx.coroutines.flow.Flow<Set<String>> =
+        observeCatalogs().map { list ->
+            list.filter { it.sourceType == CatalogSourceType.IPTV }
+                .mapNotNull { it.sourceRef }
+                .toSet()
+        }
+
+    suspend fun isIptvCategoryPinned(sourceRef: String): Boolean {
+        val catalogs = getCatalogs()
+        return catalogs.any { it.sourceType == CatalogSourceType.IPTV && it.sourceRef == sourceRef }
+    }
+
+    suspend fun togglePinIptvCategoryToHome(title: String, sourceRef: String): Boolean {
+        val current = getCatalogs().toMutableList()
+        val existingIndex = current.indexOfFirst { it.sourceType == CatalogSourceType.IPTV && it.sourceRef == sourceRef }
+        val nowPinned: Boolean
+        if (existingIndex >= 0) {
+            current.removeAt(existingIndex)
+            nowPinned = false
+        } else {
+            val catalogId = "custom_iptv_${sourceRef.hashCode().toUInt().toString(16)}"
+            current.add(
+                CatalogConfig(
+                    id = catalogId,
+                    title = title,
+                    sourceType = CatalogSourceType.IPTV,
+                    sourceRef = sourceRef,
+                    packId = "iptv",
+                    packName = "IPTV"
+                )
+            )
+            nowPinned = true
+        }
+        saveCatalogs(current)
+        return nowPinned
+    }
+
     suspend fun ensurePreinstalled(defaultCategories: List<Category>): List<CatalogConfig> {
         val defaultPreinstalled = defaultCategories.map {
             CatalogConfig(
@@ -1250,6 +1287,7 @@ class CatalogRepository @Inject constructor(
             CatalogSourceType.ADDON -> null
             CatalogSourceType.HOME_SERVER -> null
             CatalogSourceType.YOUTUBE -> null
+            CatalogSourceType.IPTV -> null
         }
     }
 
@@ -1288,6 +1326,7 @@ class CatalogRepository @Inject constructor(
             CatalogSourceType.ADDON -> null
             CatalogSourceType.HOME_SERVER -> null
             CatalogSourceType.YOUTUBE -> null
+            CatalogSourceType.IPTV -> null
         }
     }
 
@@ -1657,6 +1696,7 @@ class CatalogRepository @Inject constructor(
             sourceRef?.startsWith(HomeServerRepository.CATALOG_SOURCE_REF_PREFIX, ignoreCase = true) == true -> CatalogSourceType.HOME_SERVER
             sourceRef?.startsWith(ADDON_SOURCE_REF_PREFIX, ignoreCase = true) == true -> CatalogSourceType.ADDON
             sourceRef?.startsWith(YouTubeCollection.SOURCE_REF_PREFIX) == true -> CatalogSourceType.YOUTUBE
+            sourceRef?.startsWith("iptv_") == true -> CatalogSourceType.IPTV
             sourceRef?.startsWith("simkl_list:", ignoreCase = true) == true -> CatalogSourceType.SIMKL
             sourceUrl?.let { CatalogUrlParser.parseSimkl(it) } != null -> CatalogSourceType.SIMKL
             sourceRef?.startsWith("trakt_", ignoreCase = true) == true -> CatalogSourceType.TRAKT
@@ -1671,6 +1711,7 @@ class CatalogRepository @Inject constructor(
             normalized == CatalogSourceType.TMDB.name -> CatalogSourceType.TMDB
             normalized == CatalogSourceType.ADDON.name -> CatalogSourceType.ADDON
             normalized == CatalogSourceType.HOME_SERVER.name -> CatalogSourceType.HOME_SERVER
+            normalized == CatalogSourceType.IPTV.name -> CatalogSourceType.IPTV
             normalized == CatalogSourceType.PREINSTALLED.name -> CatalogSourceType.PREINSTALLED
             normalized.contains("HOME_SERVER") || normalized.contains("HOME SERVER") -> CatalogSourceType.HOME_SERVER
             normalized.contains("ADDON") -> CatalogSourceType.ADDON
