@@ -1427,6 +1427,12 @@ fun bestCategoryIdForChannel(
     channel: EnrichedChannel,
     tree: LiveCategoryTree,
 ): String {
+    if (channel.id.contains(":vod:") || channel.source.group.startsWith("VOD:")) {
+        val subName = channel.source.group.removePrefix("VOD:").trim().lowercase()
+        val catId = "vod_cat:$subName"
+        if (tree.byId(catId) != null) return catId
+        return "vod_all"
+    }
     val playlistGroupId = playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group)
     if (tree.byId(playlistGroupId) != null) return playlistGroupId
     if (channel.isAdult) return "adult"
@@ -1521,3 +1527,35 @@ private fun matchesCategoryId(channel: EnrichedChannel, categoryId: String): Boo
             }
         }
     }
+
+fun buildUnifiedVodCategory(vodChannels: List<IptvChannel>): LiveCategory? {
+    if (vodChannels.isEmpty()) return null
+    val groups = LinkedHashMap<String, Int>()
+    vodChannels.forEach { ch ->
+        val groupName = ch.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
+        groups[groupName] = (groups[groupName] ?: 0) + 1
+    }
+    val children = groups.map { (catName, count) ->
+        LiveCategory(
+            id = "vod_cat:${catName.lowercase()}",
+            label = catName,
+            count = count,
+            iconToken = CategoryIcon.SubEntry,
+            playlistGroupName = catName,
+        )
+    }.sortedBy { it.label }
+    return LiveCategory(
+        id = "vod_all",
+        label = "VOD",
+        count = vodChannels.size,
+        iconToken = CategoryIcon.Movie,
+        children = children,
+        playlistGroupName = "VOD",
+    )
+}
+
+fun LiveCategoryTree.withVodCategory(vodCategory: LiveCategory?): LiveCategoryTree {
+    if (vodCategory == null) return this
+    val withoutVod = top.filterNot { it.id == "vod_all" }
+    return copy(top = withoutVod + vodCategory)
+}

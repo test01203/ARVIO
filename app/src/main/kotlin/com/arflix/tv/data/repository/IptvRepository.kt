@@ -3791,36 +3791,60 @@ class IptvRepository @Inject constructor(
         }
         val config = observeConfig().first()
         val providers = xtreamProvidersForVodImport(config)
-        if (providers.isEmpty()) return@withContext emptyList()
-
         val allVod = mutableListOf<IptvChannel>()
+
+        // 1. Load from all Xtream providers together
         for (provider in providers) {
             val creds = provider.creds
-            val categories = loadXtreamVodCategoriesInternal(creds, allowNetwork)
-            val categoryMap = categories.associate { (it.categoryId?.trim().orEmpty()) to (it.categoryName?.trim().orEmpty()) }
-            val streams = getXtreamVodStreams(creds, allowNetwork, fast = true)
+            try {
+                val categories = loadXtreamVodCategoriesInternal(creds, allowNetwork)
+                val categoryMap = categories.associate { (it.categoryId?.trim().orEmpty()) to (it.categoryName?.trim().orEmpty()) }
+                val streams = getXtreamVodStreams(creds, allowNetwork, fast = true)
 
-            streams.forEach { stream ->
-                val streamId = stream.streamId ?: return@forEach
-                val name = stream.name?.trim().orEmpty().ifBlank { return@forEach }
-                val catId = stream.categoryId?.trim().orEmpty()
-                val catName = categoryMap[catId]?.ifBlank { null } ?: "VOD"
-                val ext = stream.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
-                val streamUrl = "${creds.baseUrl}/movie/${creds.username}/${creds.password}/$streamId.$ext"
-                allVod.add(
-                    IptvChannel(
-                        id = "xtream:vod:$streamId",
-                        name = name,
-                        streamUrl = streamUrl,
-                        group = "VOD: $catName",
-                        logo = stream.streamIcon?.takeIf { it.isNotBlank() },
-                        epgId = null,
-                        rawTitle = name,
-                        xtreamStreamId = streamId
+                streams.forEach { stream ->
+                    val streamId = stream.streamId ?: return@forEach
+                    val name = stream.name?.trim().orEmpty().ifBlank { return@forEach }
+                    val catId = stream.categoryId?.trim().orEmpty()
+                    val catName = categoryMap[catId]?.ifBlank { null } ?: "VOD"
+                    val ext = stream.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
+                    val streamUrl = "${creds.baseUrl}/movie/${creds.username}/${creds.password}/$streamId.$ext"
+                    allVod.add(
+                        IptvChannel(
+                            id = "xtream:vod:${provider.creds.username.hashCode()}:$streamId",
+                            name = name,
+                            streamUrl = streamUrl,
+                            group = "VOD: $catName",
+                            logo = stream.streamIcon?.takeIf { it.isNotBlank() },
+                            epgId = null,
+                            rawTitle = name,
+                            xtreamStreamId = streamId
+                        )
                     )
-                )
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                android.util.Log.w("IptvRepository", "Failed loading VOD from provider ${provider.name}: ${e.message}")
             }
         }
+
+        // 2. Also aggregate VOD from M3U playlists / cached channels
+        try {
+            val snapshot = getMemoryCachedSnapshot()
+            snapshot?.channels.orEmpty().forEach { ch ->
+                val isVod = ch.id.contains(":vod:") || ch.group.startsWith("VOD:", ignoreCase = true) ||
+                    ((ch.streamUrl.contains(".mp4") || ch.streamUrl.contains(".mkv")) &&
+                     (ch.group.contains("VOD", ignoreCase = true) || ch.group.contains("movies", ignoreCase = true) || ch.group.contains("סרטים", ignoreCase = true)))
+                if (isVod) {
+                    if (allVod.none { it.id == ch.id || (it.streamUrl == ch.streamUrl && it.streamUrl.isNotBlank()) }) {
+                        val catName = ch.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
+                        allVod.add(ch.copy(group = "VOD: $catName"))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+
         if (allVod.isNotEmpty()) {
             cachedLiveTvVodChannels = allVod
         }

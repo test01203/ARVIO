@@ -620,7 +620,7 @@ fun LiveTvScreen(
     val vodChannels by viewModel.vodChannels.collectAsState()
     val pinnedCategoryRefs by viewModel.observePinnedIptvCategoryRefs().collectAsState(emptySet())
     LaunchedEffect(Unit) {
-        viewModel.loadVodChannels(allowNetwork = false)
+        viewModel.loadVodChannels(allowNetwork = true)
     }
     LaunchedEffect(state.tvSession.recentChannelIds, state.tvSession.lastChannelId) {
         val persistedRecents = state.tvSession.recentChannelIds
@@ -667,8 +667,8 @@ fun LiveTvScreen(
         favoriteOrderIds,
         vodChannels,
     ) {
-        val liveSnapshot = state.snapshot.channels
-        val snapshot = if (vodChannels.isEmpty()) liveSnapshot else liveSnapshot + vodChannels
+        val snapshot = state.snapshot.channels
+        val vodCategory = buildUnifiedVodCategory(vodChannels)
         var pagedTotal = withContext(Dispatchers.IO) {
             if (viewModel.iptvRepository.pagedChannelsReady()) {
                 viewModel.iptvRepository.pagedChannelCount(null)
@@ -677,10 +677,8 @@ fun LiveTvScreen(
             }
         }
         // Paint the available startup snapshot before waiting for a large paged
-        // store to finish indexing. The upgrade poll below used to hold even a
-        // complete small playlist for 20 x 250 ms, leaving the guide empty for
-        // five seconds despite all channels already being cached.
-        if (snapshot.isNotEmpty() && pagedTotal <= 10_000) {
+        // store to finish indexing.
+        if (snapshot.isNotEmpty() && snapshot.size <= 10_000 && pagedTotal <= 10_000) {
             val fastValue = withContext(Dispatchers.Default) {
                 buildFastStartupChannelState(
                     channels = snapshot,
@@ -690,11 +688,11 @@ fun LiveTvScreen(
                     groupOrder = state.snapshot.groupOrder,
                 )
             }
-            enrichedState.value = fastValue
+            enrichedState.value = fastValue.withVodCategory(vodCategory)
         }
-        if (snapshot.size in 1..500 && pagedTotal <= 10_000) {
+        if ((snapshot.size in 1..500 || snapshot.size > 10_000) && pagedTotal <= 10_000) {
             var attempt = 0
-            while (attempt < 20 && pagedTotal <= 10_000) {
+            while (attempt < 30 && pagedTotal <= 10_000) {
                 delay(250L)
                 pagedTotal = withContext(Dispatchers.IO) {
                     if (viewModel.iptvRepository.pagedChannelsReady()) {
@@ -778,8 +776,9 @@ fun LiveTvScreen(
                     groupOrder = state.snapshot.groupOrder,
                 )
             }
-            enrichedState.value = value
-            viewModel.cachedEnrichedChannels = value
+            val finalPagedValue = value.withVodCategory(vodCategory)
+            enrichedState.value = finalPagedValue
+            viewModel.cachedEnrichedChannels = finalPagedValue
             viewModel.cachedChannelsSignature = signature
             System.err.println(
                 "[IPTV-FirstPaint] rows=${window.size} total=$pagedTotal category=all revision=$storeRevision"
@@ -805,6 +804,22 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
 
+        if (snapshot.size > 10_000) {
+            val previewValue = withContext(Dispatchers.Default) {
+                buildFastStartupChannelState(
+                    channels = snapshot.take(240),
+                    favorites = favSet,
+                    recents = recents.value,
+                    hiddenGroups = hiddenGroupSet,
+                    groupOrder = state.snapshot.groupOrder,
+                )
+            }
+            val finalPreview = previewValue.withVodCategory(vodCategory)
+            enrichedState.value = finalPreview
+            viewModel.cachedEnrichedChannels = finalPreview
+            viewModel.cachedChannelsSignature = signature
+            return@LaunchedEffect
+        }
         val initialValue = withContext(Dispatchers.Default) {
             buildFastStartupChannelState(
                 channels = snapshot,
@@ -814,12 +829,7 @@ fun LiveTvScreen(
                 groupOrder = state.snapshot.groupOrder,
             )
         }
-        enrichedState.value = initialValue
-        if (snapshot.size > 10_000) {
-            viewModel.cachedEnrichedChannels = initialValue
-            viewModel.cachedChannelsSignature = signature
-            return@LaunchedEffect
-        }
+        enrichedState.value = initialValue.withVodCategory(vodCategory)
         val enriched = withContext(Dispatchers.Default) {
             snapshot.mapIndexed { idx, ch -> ch.enrich(idx + 1) }
         }
@@ -831,7 +841,7 @@ fun LiveTvScreen(
                 recentCount = recents.value.count { index.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
-            )
+            ).withVodCategory(vodCategory)
         }
         val value = EnrichedChannels(all = enriched, tree = tree, index = index)
         enrichedState.value = value
@@ -1155,6 +1165,23 @@ fun LiveTvScreen(
             filteredChannelsCategoryKey = selectedCategoryId
             filteredChannelsScopeKey = categoryScope
             filteredChannelsState.value = quickGuideRows[selectedCategoryId].orEmpty()
+            return@LaunchedEffect
+        }
+        if (selectedCategoryId == "vod_all" || selectedCategoryId.startsWith("vod_cat:")) {
+            filteredChannelsCategoryKey = selectedCategoryId
+            filteredChannelsScopeKey = categoryScope
+            val vodList = if (selectedCategoryId == "vod_all") {
+                vodChannels
+            } else {
+                val catName = selectedCategoryId.removePrefix("vod_cat:").lowercase()
+                vodChannels.filter { 
+                    it.group.removePrefix("VOD:").trim().lowercase() == catName 
+                }
+            }
+            val enrichedVod = withContext(Dispatchers.Default) {
+                vodList.mapIndexed { idx, ch -> ch.enrich(idx + 1) }
+            }
+            filteredChannelsState.value = enrichedVod
             return@LaunchedEffect
         }
         var result = withContext(Dispatchers.Default) {
@@ -5209,6 +5236,11 @@ fun LiveTvScreen(
 }
 
 /** State bundle of the enriched channel list + category tree. */
+fun EnrichedChannels.withVodCategory(vodCategory: LiveCategory?): EnrichedChannels {
+    if (vodCategory == null) return this
+    return copy(tree = tree.withVodCategory(vodCategory))
+}
+
 data class EnrichedChannels(
     val all: List<EnrichedChannel>,
     val tree: LiveCategoryTree,
