@@ -3777,12 +3777,14 @@ class IptvRepository @Inject constructor(
 
     fun isVodChannel(channel: IptvChannel?): Boolean {
         if (channel == null) return false
-        return channel.id.contains(":vod:") || channel.group.startsWith("VOD:") || channel.streamUrl.contains("/movie/")
+        return channel.id.contains(":vod:") || channel.id.contains(":series:") ||
+            channel.group.startsWith("VOD:") || channel.group.startsWith("VOD_MOVIES:") || channel.group.startsWith("VOD_SERIES:") ||
+            channel.streamUrl.contains("/movie/") || channel.streamUrl.contains("/series/")
     }
 
     fun isVodChannelId(channelId: String?): Boolean {
         if (channelId == null) return false
-        return channelId.contains(":vod:")
+        return channelId.contains(":vod:") || channelId.contains(":series:")
     }
 
     suspend fun loadLiveTvVodChannels(allowNetwork: Boolean = false): List<IptvChannel> = withContext(Dispatchers.IO) {
@@ -3790,11 +3792,11 @@ class IptvRepository @Inject constructor(
             return@withContext cachedLiveTvVodChannels
         }
         val config = observeConfig().first()
-        val providers = xtreamProvidersForVodImport(config)
         val allVod = mutableListOf<IptvChannel>()
 
-        // 1. Load from all Xtream providers together
-        for (provider in providers) {
+        // 1. Load Movies from Xtream providers
+        val vodProviders = xtreamProvidersForVodImport(config)
+        for (provider in vodProviders) {
             val creds = provider.creds
             try {
                 val categories = loadXtreamVodCategoriesInternal(creds, allowNetwork)
@@ -3805,7 +3807,7 @@ class IptvRepository @Inject constructor(
                     val streamId = stream.streamId ?: return@forEach
                     val name = stream.name?.trim().orEmpty().ifBlank { return@forEach }
                     val catId = stream.categoryId?.trim().orEmpty()
-                    val catName = categoryMap[catId]?.ifBlank { null } ?: "VOD"
+                    val catName = categoryMap[catId]?.ifBlank { null } ?: "סרטים"
                     val ext = stream.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
                     val streamUrl = "${creds.baseUrl}/movie/${creds.username}/${creds.password}/$streamId.$ext"
                     allVod.add(
@@ -3813,7 +3815,7 @@ class IptvRepository @Inject constructor(
                             id = "xtream:vod:${provider.creds.username.hashCode()}:$streamId",
                             name = name,
                             streamUrl = streamUrl,
-                            group = "VOD: $catName",
+                            group = "VOD_MOVIES: $catName",
                             logo = stream.streamIcon?.takeIf { it.isNotBlank() },
                             epgId = null,
                             rawTitle = name,
@@ -3827,17 +3829,54 @@ class IptvRepository @Inject constructor(
             }
         }
 
-        // 2. Also aggregate VOD from M3U playlists / cached channels
+        // 2. Load Series from Xtream providers
+        val seriesProviders = xtreamProvidersForSeriesImport(config)
+        for (provider in seriesProviders) {
+            val creds = provider.creds
+            try {
+                val categories = loadXtreamSeriesCategoriesInternal(creds, allowNetwork)
+                val categoryMap = categories.associate { (it.categoryId?.trim().orEmpty()) to (it.categoryName?.trim().orEmpty()) }
+                val seriesList = getXtreamSeriesList(creds, allowNetwork, fast = true)
+
+                seriesList.forEach { series ->
+                    val seriesId = series.seriesId ?: return@forEach
+                    val name = series.name?.trim().orEmpty().ifBlank { return@forEach }
+                    val catId = series.categoryId?.trim().orEmpty()
+                    val catName = categoryMap[catId]?.ifBlank { null } ?: "סדרות"
+                    // Placeholder streamUrl; resolved to first episode when played via findVodChannelById or player
+                    val streamUrl = "series://${creds.username.hashCode()}/$seriesId"
+                    allVod.add(
+                        IptvChannel(
+                            id = "xtream:series:${creds.username.hashCode()}:$seriesId",
+                            name = name,
+                            streamUrl = streamUrl,
+                            group = "VOD_SERIES: $catName",
+                            logo = series.cover?.takeIf { it.isNotBlank() },
+                            epgId = null,
+                            rawTitle = name,
+                            xtreamStreamId = seriesId
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                android.util.Log.w("IptvRepository", "Failed loading Series from provider ${provider.name}: ${e.message}")
+            }
+        }
+
+        // 3. Aggregate VOD / Series from M3U playlists
         try {
             val snapshot = getMemoryCachedSnapshot()
             snapshot?.channels.orEmpty().forEach { ch ->
+                val isSeries = ch.group.contains("series", ignoreCase = true) || ch.group.contains("סדרות", ignoreCase = true)
                 val isVod = ch.id.contains(":vod:") || ch.group.startsWith("VOD:", ignoreCase = true) ||
                     ((ch.streamUrl.contains(".mp4") || ch.streamUrl.contains(".mkv")) &&
-                     (ch.group.contains("VOD", ignoreCase = true) || ch.group.contains("movies", ignoreCase = true) || ch.group.contains("סרטים", ignoreCase = true)))
+                     (ch.group.contains("VOD", ignoreCase = true) || ch.group.contains("movies", ignoreCase = true) || ch.group.contains("סרטים", ignoreCase = true) || isSeries))
                 if (isVod) {
                     if (allVod.none { it.id == ch.id || (it.streamUrl == ch.streamUrl && it.streamUrl.isNotBlank()) }) {
-                        val catName = ch.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
-                        allVod.add(ch.copy(group = "VOD: $catName"))
+                        val rawCat = ch.group.removePrefix("VOD:").removePrefix("VOD_MOVIES:").removePrefix("VOD_SERIES:").trim().ifBlank { if (isSeries) "סדרות" else "סרטים" }
+                        val prefix = if (isSeries) "VOD_SERIES:" else "VOD_MOVIES:"
+                        allVod.add(ch.copy(group = "$prefix $rawCat"))
                     }
                 }
             }
@@ -3853,7 +3892,38 @@ class IptvRepository @Inject constructor(
 
     suspend fun findVodChannelById(channelId: String): IptvChannel? = withContext(Dispatchers.IO) {
         if (!isVodChannelId(channelId)) return@withContext null
-        cachedLiveTvVodChannels.firstOrNull { it.id == channelId }?.let { return@withContext it }
+        val cached = cachedLiveTvVodChannels.firstOrNull { it.id == channelId }
+        if (cached != null && cached.streamUrl.startsWith("http")) {
+            return@withContext cached
+        }
+        if (channelId.contains(":series:")) {
+            val seriesId = channelId.substringAfterLast(":").toIntOrNull()
+            if (seriesId != null) {
+                val config = observeConfig().first()
+                for (provider in xtreamProvidersForSeriesImport(config)) {
+                    if (channelId.startsWith("xtream:series:${provider.creds.username.hashCode()}:")) {
+                        try {
+                            val episodes = getXtreamSeriesEpisodes(provider.creds, seriesId, allowNetwork = true, fast = true)
+                            val ep = episodes.firstOrNull()
+                            if (ep != null) {
+                                val ext = ep.containerExtension?.trim()?.ifBlank { null } ?: "mp4"
+                                val streamUrl = "${provider.creds.baseUrl}/series/${provider.creds.username}/${provider.creds.password}/${ep.id}.$ext"
+                                val updated = (cached ?: IptvChannel(
+                                    id = channelId,
+                                    name = "Series $seriesId",
+                                    streamUrl = streamUrl,
+                                    group = "VOD_SERIES: סדרות"
+                                )).copy(streamUrl = streamUrl)
+                                cachedLiveTvVodChannels = cachedLiveTvVodChannels.map { if (it.id == channelId) updated else it }
+                                return@withContext updated
+                            }
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                        }
+                    }
+                }
+            }
+        }
         val streams = cachedXtreamVodStreams
         val streamId = channelId.substringAfter(":vod:").toIntOrNull()
         if (streams.isNotEmpty() && streamId != null) {
@@ -3868,7 +3938,7 @@ class IptvRepository @Inject constructor(
                         id = channelId,
                         name = stream.name.orEmpty(),
                         streamUrl = streamUrl,
-                        group = "VOD",
+                        group = "VOD_MOVIES: סרטים",
                         logo = stream.streamIcon?.takeIf { it.isNotBlank() },
                         xtreamStreamId = streamId
                     )
@@ -5192,7 +5262,9 @@ class IptvRepository @Inject constructor(
         val name: String? = null,
         @SerializedName(value = "imdb", alternate = ["imdb_id", "imdbid"]) val imdb: String? = null,
         @SerializedName(value = "tmdb", alternate = ["tmdb_id", "tmdbid"]) val tmdb: String? = null,
-        @SerializedName("category_id") val categoryId: String? = null
+        @SerializedName("category_id") val categoryId: String? = null,
+        @SerializedName(value = "cover", alternate = ["stream_icon", "poster", "cover_url"]) val cover: String? = null,
+        @SerializedName(value = "year", alternate = ["releaseDate"]) val year: String? = null
     )
 
     private data class XtreamSeriesEpisode(

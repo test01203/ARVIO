@@ -668,7 +668,7 @@ fun LiveTvScreen(
         vodChannels,
     ) {
         val snapshot = state.snapshot.channels
-        val vodCategory = buildUnifiedVodCategory(vodChannels)
+        val vodCategories = buildUnifiedVodCategories(vodChannels)
         var pagedTotal = withContext(Dispatchers.IO) {
             if (viewModel.iptvRepository.pagedChannelsReady()) {
                 viewModel.iptvRepository.pagedChannelCount(null)
@@ -688,7 +688,7 @@ fun LiveTvScreen(
                     groupOrder = state.snapshot.groupOrder,
                 )
             }
-            enrichedState.value = fastValue.withVodCategory(vodCategory)
+            enrichedState.value = fastValue.withVodCategories(vodCategories)
         }
         if ((snapshot.size in 1..500 || snapshot.size > 10_000) && pagedTotal <= 10_000) {
             var attempt = 0
@@ -776,7 +776,7 @@ fun LiveTvScreen(
                     groupOrder = state.snapshot.groupOrder,
                 )
             }
-            val finalPagedValue = value.withVodCategory(vodCategory)
+            val finalPagedValue = value.withVodCategories(vodCategories)
             enrichedState.value = finalPagedValue
             viewModel.cachedEnrichedChannels = finalPagedValue
             viewModel.cachedChannelsSignature = signature
@@ -814,7 +814,7 @@ fun LiveTvScreen(
                     groupOrder = state.snapshot.groupOrder,
                 )
             }
-            val finalPreview = previewValue.withVodCategory(vodCategory)
+            val finalPreview = previewValue.withVodCategories(vodCategories)
             enrichedState.value = finalPreview
             viewModel.cachedEnrichedChannels = finalPreview
             viewModel.cachedChannelsSignature = signature
@@ -829,7 +829,7 @@ fun LiveTvScreen(
                 groupOrder = state.snapshot.groupOrder,
             )
         }
-        enrichedState.value = initialValue.withVodCategory(vodCategory)
+        enrichedState.value = initialValue.withVodCategories(vodCategories)
         val enriched = withContext(Dispatchers.Default) {
             snapshot.mapIndexed { idx, ch -> ch.enrich(idx + 1) }
         }
@@ -841,7 +841,7 @@ fun LiveTvScreen(
                 recentCount = recents.value.count { index.isVisibleNonAdultChannel(it) },
                 hiddenGroups = hiddenGroupSet,
                 groupOrder = state.snapshot.groupOrder,
-            ).withVodCategory(vodCategory)
+            ).withVodCategories(vodCategories)
         }
         val value = EnrichedChannels(all = enriched, tree = tree, index = index)
         enrichedState.value = value
@@ -1148,6 +1148,7 @@ fun LiveTvScreen(
         lastKnownPagedTotal,
         lastKnownPlaylistGroupCounts,
         manualChannelOrder,
+        vodChannels,
     ) {
         val tree = visibleEnrichedState.value.tree
         val categoryCount = when (selectedCategoryId) {
@@ -1167,16 +1168,40 @@ fun LiveTvScreen(
             filteredChannelsState.value = quickGuideRows[selectedCategoryId].orEmpty()
             return@LaunchedEffect
         }
-        if (selectedCategoryId == "vod_all" || selectedCategoryId.startsWith("vod_cat:")) {
+        if (selectedCategoryId.startsWith("vod_")) {
             filteredChannelsCategoryKey = selectedCategoryId
             filteredChannelsScopeKey = categoryScope
-            val vodList = if (selectedCategoryId == "vod_all") {
-                vodChannels
-            } else {
-                val catName = selectedCategoryId.removePrefix("vod_cat:").lowercase()
-                vodChannels.filter { 
-                    it.group.removePrefix("VOD:").trim().lowercase() == catName 
+            val vodList = when {
+                selectedCategoryId == "vod_movies" -> {
+                    vodChannels.filterNot { it.id.contains(":series:") || it.group.startsWith("VOD_SERIES:") }
                 }
+                selectedCategoryId.startsWith("vod_movies_cat:") -> {
+                    val catName = selectedCategoryId.removePrefix("vod_movies_cat:").lowercase()
+                    vodChannels.filter {
+                        !it.id.contains(":series:") && !it.group.startsWith("VOD_SERIES:") &&
+                        (it.group.removePrefix("VOD_MOVIES:").removePrefix("VOD:").trim().lowercase() == catName)
+                    }
+                }
+                selectedCategoryId == "vod_series" -> {
+                    vodChannels.filter { it.id.contains(":series:") || it.group.startsWith("VOD_SERIES:") }
+                }
+                selectedCategoryId.startsWith("vod_series_cat:") -> {
+                    val catName = selectedCategoryId.removePrefix("vod_series_cat:").lowercase()
+                    vodChannels.filter {
+                        (it.id.contains(":series:") || it.group.startsWith("VOD_SERIES:")) &&
+                        (it.group.removePrefix("VOD_SERIES:").trim().lowercase() == catName)
+                    }
+                }
+                selectedCategoryId == "vod_all" -> {
+                    vodChannels
+                }
+                selectedCategoryId.startsWith("vod_cat:") -> {
+                    val catName = selectedCategoryId.removePrefix("vod_cat:").lowercase()
+                    vodChannels.filter {
+                        it.group.removePrefix("VOD:").removePrefix("VOD_MOVIES:").removePrefix("VOD_SERIES:").trim().lowercase() == catName
+                    }
+                }
+                else -> vodChannels
             }
             val enrichedVod = withContext(Dispatchers.Default) {
                 vodList.mapIndexed { idx, ch -> ch.enrich(idx + 1) }
@@ -1311,7 +1336,7 @@ fun LiveTvScreen(
         val scopeKey = filteredChannelsScopeKey
         val source = filteredChannelsState.value
         // No variant groups (large list) → reuse the source list as-is, no extra copy.
-        val collapsed = if (variantGroups.isEmpty() || categoryKey == "fav" || categoryKey == "recent") {
+        val collapsed = if (variantGroups.isEmpty() || categoryKey == "fav" || categoryKey == "recent" || categoryKey?.startsWith("vod_") == true) {
             source
         } else {
             withContext(Dispatchers.Default) { collapseChannelVariants(source, variantGroups) }
@@ -4230,7 +4255,7 @@ fun LiveTvScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    if (!sportsSelected) {
+                    if (!sportsSelected && !selectedCategoryId.startsWith("vod_")) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -4258,7 +4283,20 @@ fun LiveTvScreen(
                             )
                         }
                     }
-                    if (sportsSelected) SportsGuidePane(
+                    if (selectedCategoryId.startsWith("vod_")) {
+                        val vodCategoryTitle = visibleEnrichedState.value.tree.byId(selectedCategoryId)?.let { customGroupName(it, liveGroupNames) ?: liveCategoryLabel(it.label) }
+                            ?: if (selectedCategoryId.startsWith("vod_series")) "סדרות" else "סרטים"
+                        VodCatalogPane(
+                            title = vodCategoryTitle,
+                            channels = filteredChannels,
+                            loading = vodChannels.isEmpty(),
+                            onPlay = { channel -> playLiveFullscreen(channel.enrich(0)) },
+                            onOpenCategories = {
+                                openCategoryDrawer()
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else if (sportsSelected) SportsGuidePane(
                         events = sportsDisplayEvents, now = guideClockMillis, loading = sportsDisplayLoading, clockFormat = sportsClockFormat,
                         failed = sportsDisplayFailed, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
@@ -4410,7 +4448,7 @@ fun LiveTvScreen(
                         .fillMaxSize()
                         .padding(top = contentTopPadding),
                 ) {
-                    if (!sportsSelected) MiniPlayerRow(
+                    if (!sportsSelected && !selectedCategoryId.startsWith("vod_")) MiniPlayerRow(
                         focusedProgrammeProvider = { focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG } },
                         focusedChannelProvider = ::focusedChannelPreview,
                         exoPlayer = exoPlayer,
@@ -4427,7 +4465,18 @@ fun LiveTvScreen(
                         playerActive = miniPlayerActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (sportsSelected) SportsGuidePane(
+                    if (selectedCategoryId.startsWith("vod_")) {
+                        val vodCategoryTitle = visibleEnrichedState.value.tree.byId(selectedCategoryId)?.let { customGroupName(it, liveGroupNames) ?: liveCategoryLabel(it.label) }
+                            ?: if (selectedCategoryId.startsWith("vod_series")) "סדרות" else "סרטים"
+                        VodCatalogPane(
+                            title = vodCategoryTitle,
+                            channels = filteredChannels,
+                            loading = vodChannels.isEmpty(),
+                            onPlay = { channel -> playLiveFullscreen(channel.enrich(0)) },
+                            onOpenCategories = { openCategoryDrawer() },
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else if (sportsSelected) SportsGuidePane(
                         events = sportsDisplayEvents, now = guideClockMillis, loading = sportsDisplayLoading, clockFormat = sportsClockFormat,
                         failed = sportsDisplayFailed, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
@@ -5236,10 +5285,13 @@ fun LiveTvScreen(
 }
 
 /** State bundle of the enriched channel list + category tree. */
-fun EnrichedChannels.withVodCategory(vodCategory: LiveCategory?): EnrichedChannels {
-    if (vodCategory == null) return this
-    return copy(tree = tree.withVodCategory(vodCategory))
+fun EnrichedChannels.withVodCategories(vodCategories: List<LiveCategory>): EnrichedChannels {
+    if (vodCategories.isEmpty()) return this
+    return copy(tree = tree.withVodCategories(vodCategories))
 }
+
+fun EnrichedChannels.withVodCategory(vodCategory: LiveCategory?): EnrichedChannels =
+    withVodCategories(listOfNotNull(vodCategory))
 
 data class EnrichedChannels(
     val all: List<EnrichedChannel>,

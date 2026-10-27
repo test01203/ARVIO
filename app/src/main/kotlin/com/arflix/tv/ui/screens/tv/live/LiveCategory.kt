@@ -403,6 +403,8 @@ fun liveCategoryLabel(raw: String): String = when (raw) {
     "Recently Watched" -> stringResource(R.string.live_cat_recently_watched)
     "All Channels" -> stringResource(R.string.live_label_all_channels)
     "VOD" -> stringResource(R.string.live_cat_vod)
+    "Movies" -> stringResource(R.string.movies)
+    "Series" -> stringResource(R.string.series)
     "Sports" -> stringResource(R.string.live_cat_sports)
     "Adult" -> stringResource(R.string.live_cat_adult)
     "Ungrouped" -> stringResource(R.string.live_cat_ungrouped)
@@ -563,10 +565,8 @@ fun buildCategoryTree(
     var vodTotalCount = 0
 
     channels.forEach { channel ->
-        if (channel.source.id.contains(":vod:") || channel.source.group.startsWith("VOD:")) {
-            val vodSubgroup = channel.source.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
-            vodGroupCounts[vodSubgroup] = (vodGroupCounts[vodSubgroup] ?: 0) + 1
-            vodTotalCount++
+        if (channel.source.id.contains(":vod:") || channel.source.id.contains(":series:") ||
+            channel.source.group.startsWith("VOD:") || channel.source.group.startsWith("VOD_MOVIES:") || channel.source.group.startsWith("VOD_SERIES:")) {
             return@forEach
         }
         val playlistId = channelPlaylistId(channel.id)
@@ -684,27 +684,8 @@ fun buildCategoryTree(
                 children = autoGlobal + countryCategories + adultCategories,
             )
         )
-        if (vodTotalCount > 0) {
-            val vodSubs = vodGroupCounts.map { (catName, count) ->
-                LiveCategory(
-                    id = "vod_cat:${catName.lowercase()}",
-                    label = catName,
-                    count = count,
-                    iconToken = CategoryIcon.SubEntry,
-                    playlistGroupName = catName,
-                )
-            }
-            add(
-                LiveCategory(
-                    id = "vod_all",
-                    label = "VOD",
-                    count = vodTotalCount,
-                    iconToken = CategoryIcon.Movie,
-                    children = vodSubs,
-                    playlistGroupName = "VOD",
-                )
-            )
-        }
+        val vodCategories = buildUnifiedVodCategories(channels.map { it.source })
+        addAll(vodCategories)
     }
     val playlistGroups = orderPlaylistGroups(playlistGroupCounts, groupOrder).map { (id, value) ->
         LiveCategory(
@@ -1427,11 +1408,17 @@ fun bestCategoryIdForChannel(
     channel: EnrichedChannel,
     tree: LiveCategoryTree,
 ): String {
-    if (channel.id.contains(":vod:") || channel.source.group.startsWith("VOD:")) {
-        val subName = channel.source.group.removePrefix("VOD:").trim().lowercase()
-        val catId = "vod_cat:$subName"
+    if (channel.id.contains(":series:") || channel.source.group.startsWith("VOD_SERIES:")) {
+        val subName = channel.source.group.removePrefix("VOD_SERIES:").trim().lowercase()
+        val catId = "vod_series_cat:$subName"
         if (tree.byId(catId) != null) return catId
-        return "vod_all"
+        return "vod_series"
+    }
+    if (channel.id.contains(":vod:") || channel.source.group.startsWith("VOD_MOVIES:") || channel.source.group.startsWith("VOD:")) {
+        val subName = channel.source.group.removePrefix("VOD_MOVIES:").removePrefix("VOD:").trim().lowercase()
+        val catId = "vod_movies_cat:$subName"
+        if (tree.byId(catId) != null) return catId
+        return "vod_movies"
     }
     val playlistGroupId = playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group)
     if (tree.byId(playlistGroupId) != null) return playlistGroupId
@@ -1528,34 +1515,84 @@ private fun matchesCategoryId(channel: EnrichedChannel, categoryId: String): Boo
         }
     }
 
-fun buildUnifiedVodCategory(vodChannels: List<IptvChannel>): LiveCategory? {
-    if (vodChannels.isEmpty()) return null
-    val groups = LinkedHashMap<String, Int>()
-    vodChannels.forEach { ch ->
-        val groupName = ch.group.removePrefix("VOD:").trim().ifBlank { "VOD" }
-        groups[groupName] = (groups[groupName] ?: 0) + 1
-    }
-    val children = groups.map { (catName, count) ->
-        LiveCategory(
-            id = "vod_cat:${catName.lowercase()}",
-            label = catName,
-            count = count,
-            iconToken = CategoryIcon.SubEntry,
-            playlistGroupName = catName,
+fun buildUnifiedVodCategories(vodChannels: List<IptvChannel>): List<LiveCategory> {
+    if (vodChannels.isEmpty()) return emptyList()
+
+    val movies = vodChannels.filterNot { it.id.contains(":series:") || it.group.startsWith("VOD_SERIES:") }
+    val series = vodChannels.filter { it.id.contains(":series:") || it.group.startsWith("VOD_SERIES:") }
+
+    val result = mutableListOf<LiveCategory>()
+
+    if (movies.isNotEmpty()) {
+        val groups = LinkedHashMap<String, Int>()
+        movies.forEach { ch ->
+            val groupName = ch.group.removePrefix("VOD_MOVIES:").removePrefix("VOD:").trim().ifBlank { "סרטים" }
+            groups[groupName] = (groups[groupName] ?: 0) + 1
+        }
+        val children = groups.map { (catName, count) ->
+            LiveCategory(
+                id = "vod_movies_cat:${catName.lowercase()}",
+                label = catName,
+                count = count,
+                iconToken = CategoryIcon.SubEntry,
+                playlistGroupName = catName,
+            )
+        }.sortedBy { it.label }
+
+        result.add(
+            LiveCategory(
+                id = "vod_movies",
+                label = "Movies",
+                count = movies.size,
+                iconToken = CategoryIcon.Movie,
+                children = children,
+                playlistGroupName = "Movies",
+            )
         )
-    }.sortedBy { it.label }
-    return LiveCategory(
-        id = "vod_all",
-        label = "VOD",
-        count = vodChannels.size,
-        iconToken = CategoryIcon.Movie,
-        children = children,
-        playlistGroupName = "VOD",
-    )
+    }
+
+    if (series.isNotEmpty()) {
+        val groups = LinkedHashMap<String, Int>()
+        series.forEach { ch ->
+            val groupName = ch.group.removePrefix("VOD_SERIES:").trim().ifBlank { "סדרות" }
+            groups[groupName] = (groups[groupName] ?: 0) + 1
+        }
+        val children = groups.map { (catName, count) ->
+            LiveCategory(
+                id = "vod_series_cat:${catName.lowercase()}",
+                label = catName,
+                count = count,
+                iconToken = CategoryIcon.SubEntry,
+                playlistGroupName = catName,
+            )
+        }.sortedBy { it.label }
+
+        result.add(
+            LiveCategory(
+                id = "vod_series",
+                label = "Series",
+                count = series.size,
+                iconToken = CategoryIcon.Movie,
+                children = children,
+                playlistGroupName = "Series",
+            )
+        )
+    }
+
+    return result
+}
+
+fun buildUnifiedVodCategory(vodChannels: List<IptvChannel>): LiveCategory? =
+    buildUnifiedVodCategories(vodChannels).firstOrNull()
+
+fun LiveCategoryTree.withVodCategories(vodCategories: List<LiveCategory>): LiveCategoryTree {
+    if (vodCategories.isEmpty()) return this
+    val vodIds = setOf("vod_all", "vod_movies", "vod_series")
+    val withoutVod = top.filterNot { it.id in vodIds }
+    return copy(top = withoutVod + vodCategories)
 }
 
 fun LiveCategoryTree.withVodCategory(vodCategory: LiveCategory?): LiveCategoryTree {
     if (vodCategory == null) return this
-    val withoutVod = top.filterNot { it.id == "vod_all" }
-    return copy(top = withoutVod + vodCategory)
+    return withVodCategories(listOf(vodCategory))
 }

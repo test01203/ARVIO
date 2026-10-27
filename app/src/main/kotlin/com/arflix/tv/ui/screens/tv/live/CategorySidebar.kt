@@ -162,6 +162,8 @@ fun CategorySidebar(
     val contentVisible = if (fixedViewport) LocalLiveDrawerVisible.current else expanded || contentAlpha > 0f
     var expandedCountry by rememberSaveable { mutableStateOf<String?>(null) }
     var expandedAll by rememberSaveable { mutableStateOf(false) }
+    var expandedMovies by rememberSaveable { mutableStateOf(false) }
+    var expandedSeries by rememberSaveable { mutableStateOf(false) }
     var expandedVod by rememberSaveable { mutableStateOf(false) }
     var expandedPlaylistIds by rememberSaveable {
         mutableStateOf(
@@ -444,6 +446,15 @@ fun CategorySidebar(
         if (allCategory?.children?.any { child -> child.containsId(selectedId) } == true) {
             expandedAll = true
         }
+        if (selectedId.startsWith("vod_movies")) {
+            expandedMovies = true
+        }
+        if (selectedId.startsWith("vod_series")) {
+            expandedSeries = true
+        }
+        if (selectedId.startsWith("vod_cat:") || selectedId == "vod_all") {
+            expandedVod = true
+        }
         playlistSections.firstOrNull { section ->
             section.id == selectedId || section.categories.any { it.containsId(selectedId) }
         }?.id?.let { sectionId ->
@@ -619,8 +630,11 @@ fun CategorySidebar(
             ) {
                 itemsIndexed(visibleTopCategories, key = { _, cat -> "top:${cat.id}" }) { index, cat ->
                     val isAllGroup = cat.id == "all" && cat.children.isNotEmpty()
+                    val isMoviesGroup = cat.id == "vod_movies" && cat.children.isNotEmpty()
+                    val isSeriesGroup = cat.id == "vod_series" && cat.children.isNotEmpty()
                     val isVodGroup = cat.id == "vod_all" && cat.children.isNotEmpty()
-                    val isOpen = (isAllGroup && expandedAll) || (isVodGroup && expandedVod)
+                    val isAnyVodGroup = isMoviesGroup || isSeriesGroup || isVodGroup
+                    val isOpen = (isAllGroup && expandedAll) || (isMoviesGroup && expandedMovies) || (isSeriesGroup && expandedSeries) || (isVodGroup && expandedVod)
                     val itemKey = "top:${cat.id}"
                     val requester = rememberCategoryRequester(
                         key = itemKey,
@@ -637,7 +651,7 @@ fun CategorySidebar(
                         icon = iconFor(cat),
                         active = selectedId == cat.id,
                         expanded = contentVisible,
-                        hasChildren = isAllGroup || isVodGroup,
+                        hasChildren = isAllGroup || isAnyVodGroup,
                         isOpenGroup = isOpen,
                         focusRequester = requester,
                         onFocused = {
@@ -651,6 +665,12 @@ fun CategorySidebar(
                                 // children are never reachable.
                                 expandedAll = !expandedAll
                                 onSelectKeepOpen(cat.id)
+                            } else if (isMoviesGroup) {
+                                expandedMovies = !expandedMovies
+                                onSelectKeepOpen(cat.id)
+                            } else if (isSeriesGroup) {
+                                expandedSeries = !expandedSeries
+                                onSelectKeepOpen(cat.id)
                             } else if (isVodGroup) {
                                 expandedVod = !expandedVod
                                 onSelectKeepOpen(cat.id)
@@ -659,7 +679,7 @@ fun CategorySidebar(
                             }
                         },
                     )
-                    if (isVodGroup && isOpen && contentVisible) {
+                    if (isAnyVodGroup && isOpen && contentVisible) {
                         cat.children.forEachIndexed { subIndex, child ->
                             val childKey = "vod:child:${child.id}"
                             val childRequester = rememberCategoryRequester(
@@ -1482,6 +1502,7 @@ private fun findCategoryLazyIndex(
         if (cat.id == targetId) return index
         index++
         val isAllGroup = cat.id == "all" && cat.children.isNotEmpty()
+        val isVodGroup = (cat.id == "vod_movies" || cat.id == "vod_series" || cat.id == "vod_all") && cat.children.isNotEmpty()
         if (isAllGroup && expandedAll) {
             for (child in cat.children) {
                 if (child.id == targetId) return index
@@ -1492,6 +1513,11 @@ private fun findCategoryLazyIndex(
                         index++
                     }
                 }
+            }
+        } else if (isVodGroup) {
+            for (child in cat.children) {
+                if (child.id == targetId) return index
+                index++
             }
         }
     }
